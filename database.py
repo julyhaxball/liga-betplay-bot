@@ -1,7 +1,7 @@
 import aiosqlite
-import os
 
 DB_PATH = "liga.db"
+PRESUPUESTO_INICIAL = 50_000_000
 
 async def init_db():
     async with aiosqlite.connect(DB_PATH) as db:
@@ -12,6 +12,7 @@ async def init_db():
                 nombre TEXT UNIQUE NOT NULL,
                 dt_nombre TEXT NOT NULL,
                 rol_id TEXT,
+                presupuesto INTEGER DEFAULT 50000000,
                 puntos INTEGER DEFAULT 0,
                 pj INTEGER DEFAULT 0,
                 pg INTEGER DEFAULT 0,
@@ -46,24 +47,27 @@ async def init_db():
 
             CREATE TABLE IF NOT EXISTS ofertas (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                jugador_origen_id INTEGER NOT NULL,
-                jugador_destino_id INTEGER NOT NULL,
-                equipo_origen_id INTEGER NOT NULL,
-                equipo_destino_id INTEGER NOT NULL,
+                jugador_id INTEGER NOT NULL,
+                equipo_comprador_id INTEGER NOT NULL,
+                equipo_vendedor_id INTEGER NOT NULL,
+                monto INTEGER NOT NULL,
                 estado TEXT DEFAULT 'pendiente',
                 creado_en TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (jugador_origen_id) REFERENCES jugadores(id),
-                FOREIGN KEY (jugador_destino_id) REFERENCES jugadores(id),
-                FOREIGN KEY (equipo_origen_id) REFERENCES equipos(id),
-                FOREIGN KEY (equipo_destino_id) REFERENCES equipos(id)
+                FOREIGN KEY (jugador_id) REFERENCES jugadores(id),
+                FOREIGN KEY (equipo_comprador_id) REFERENCES equipos(id),
+                FOREIGN KEY (equipo_vendedor_id) REFERENCES equipos(id)
             );
         """)
-        # Agregar columna rol_id si no existe (para bases de datos ya creadas)
-        try:
-            await db.execute("ALTER TABLE equipos ADD COLUMN rol_id TEXT")
-            await db.commit()
-        except:
-            pass
+        # Columnas opcionales para bases ya existentes
+        for col, tipo, default in [
+            ("rol_id", "TEXT", "NULL"),
+            ("presupuesto", "INTEGER", str(PRESUPUESTO_INICIAL)),
+        ]:
+            try:
+                await db.execute(f"ALTER TABLE equipos ADD COLUMN {col} {tipo} DEFAULT {default}")
+                await db.commit()
+            except:
+                pass
 
 async def get_equipo_by_discord(discord_id: str):
     async with aiosqlite.connect(DB_PATH) as db:
@@ -92,8 +96,8 @@ async def get_equipo_by_rol(rol_id: str):
 async def crear_equipo(discord_id: str, nombre: str, dt_nombre: str, rol_id: str = None):
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute(
-            "INSERT INTO equipos (discord_id, nombre, dt_nombre, rol_id) VALUES (?, ?, ?, ?)",
-            (discord_id, nombre, dt_nombre, rol_id)
+            "INSERT INTO equipos (discord_id, nombre, dt_nombre, rol_id, presupuesto) VALUES (?, ?, ?, ?, ?)",
+            (discord_id, nombre, dt_nombre, rol_id, PRESUPUESTO_INICIAL)
         )
         await db.commit()
 
@@ -105,10 +109,7 @@ async def get_todos_equipos():
 
 async def inscribir_jugador(nombre: str, posicion: str, equipo_id: int, dorsal: int):
     async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute(
-            "INSERT INTO jugadores (nombre, posicion, equipo_id, dorsal) VALUES (?, ?, ?, ?)",
-            (nombre, posicion, equipo_id, dorsal)
-        )
+        await db.execute("INSERT INTO jugadores (nombre, posicion, equipo_id, dorsal) VALUES (?, ?, ?, ?)", (nombre, posicion, equipo_id, dorsal))
         await db.commit()
 
 async def get_plantilla(equipo_id: int):
@@ -220,13 +221,13 @@ async def generar_fixture_automatico():
             jornada += 1
     return total
 
-# ── Comercios ─────────────────────────────────────────────────
+# ── Ofertas de fichaje con dinero ─────────────────────────────
 
-async def crear_oferta(jugador_origen_id: int, jugador_destino_id: int, equipo_origen_id: int, equipo_destino_id: int):
+async def crear_oferta(jugador_id: int, equipo_comprador_id: int, equipo_vendedor_id: int, monto: int):
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute(
-            "INSERT INTO ofertas (jugador_origen_id, jugador_destino_id, equipo_origen_id, equipo_destino_id) VALUES (?, ?, ?, ?)",
-            (jugador_origen_id, jugador_destino_id, equipo_origen_id, equipo_destino_id)
+            "INSERT INTO ofertas (jugador_id, equipo_comprador_id, equipo_vendedor_id, monto) VALUES (?, ?, ?, ?)",
+            (jugador_id, equipo_comprador_id, equipo_vendedor_id, monto)
         )
         await db.commit()
         async with db.execute("SELECT last_insert_rowid()") as cur:
@@ -243,22 +244,34 @@ async def get_ofertas_pendientes(equipo_id: int):
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         async with db.execute(
-            "SELECT * FROM ofertas WHERE equipo_destino_id = ? AND estado = 'pendiente'", (equipo_id,)
+            "SELECT * FROM ofertas WHERE equipo_vendedor_id = ? AND estado = 'pendiente' ORDER BY creado_en DESC",
+            (equipo_id,)
         ) as cur:
             return await cur.fetchall()
 
-async def responder_oferta(oferta_id: int, aceptar: bool):
-    estado = 'aceptada' if aceptar else 'rechazada'
-    async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute("UPDATE ofertas SET estado = ? WHERE id = ?", (estado, oferta_id))
-        await db.commit()
-
-async def ejecutar_intercambio(oferta_id: int):
+async def aceptar_oferta(oferta_id: int):
     oferta = await get_oferta(oferta_id)
-    if not oferta:
+    if not oferta or oferta["estado"] != "pendiente":
         return False
     async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute("UPDATE jugadores SET equipo_id = ? WHERE id = ?", (oferta["equipo_destino_id"], oferta["jugador_origen_id"]))
-        await db.execute("UPDATE jugadores SET equipo_id = ? WHERE id = ?", (oferta["equipo_origen_id"], oferta["jugador_destino_id"]))
+        # Transferir jugador
+        await db.execute("UPDATE jugadores SET equipo_id = ?, libre = 0 WHERE id = ?",
+            (oferta["equipo_comprador_id"], oferta["jugador_id"]))
+        # Descontar dinero al comprador
+        await db.execute("UPDATE equipos SET presupuesto = presupuesto - ? WHERE id = ?",
+            (oferta["monto"], oferta["equipo_comprador_id"]))
+        # Sumar dinero al vendedor
+        await db.execute("UPDATE equipos SET presupuesto = presupuesto + ? WHERE id = ?",
+            (oferta["monto"], oferta["equipo_vendedor_id"]))
+        # Marcar oferta como aceptada
+        await db.execute("UPDATE ofertas SET estado = 'aceptada' WHERE id = ?", (oferta_id,))
+        # Cancelar otras ofertas pendientes por ese jugador
+        await db.execute("UPDATE ofertas SET estado = 'cancelada' WHERE jugador_id = ? AND id != ? AND estado = 'pendiente'",
+            (oferta["jugador_id"], oferta_id))
         await db.commit()
     return True
+
+async def rechazar_oferta(oferta_id: int):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("UPDATE ofertas SET estado = 'rechazada' WHERE id = ?", (oferta_id,))
+        await db.commit()
