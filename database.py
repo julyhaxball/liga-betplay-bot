@@ -45,6 +45,14 @@ async def init_db():
                 FOREIGN KEY (visitante_id) REFERENCES equipos(id)
             );
 
+            CREATE TABLE IF NOT EXISTS sub_dts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                equipo_id INTEGER NOT NULL,
+                discord_id TEXT NOT NULL,
+                UNIQUE(equipo_id, discord_id),
+                FOREIGN KEY (equipo_id) REFERENCES equipos(id)
+            );
+
             CREATE TABLE IF NOT EXISTS ofertas (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 jugador_id INTEGER NOT NULL,
@@ -275,3 +283,34 @@ async def rechazar_oferta(oferta_id: int):
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute("UPDATE ofertas SET estado = 'rechazada' WHERE id = ?", (oferta_id,))
         await db.commit()
+
+# ── Sub DTs ───────────────────────────────────────────────────
+
+async def agregar_sub_dt(equipo_id: int, discord_id: str):
+    async with aiosqlite.connect(DB_PATH) as db:
+        try:
+            await db.execute("INSERT INTO sub_dts (equipo_id, discord_id) VALUES (?, ?)", (equipo_id, discord_id))
+            await db.commit()
+            return True
+        except:
+            return False
+
+async def quitar_sub_dt(equipo_id: int, discord_id: str):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("DELETE FROM sub_dts WHERE equipo_id = ? AND discord_id = ?", (equipo_id, discord_id))
+        await db.commit()
+
+async def get_equipo_by_sub_dt(discord_id: str):
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            "SELECT e.* FROM equipos e JOIN sub_dts s ON e.id = s.equipo_id WHERE s.discord_id = ?",
+            (discord_id,)
+        ) as cur:
+            return await cur.fetchone()
+
+async def get_sub_dts(equipo_id: int):
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute("SELECT * FROM sub_dts WHERE equipo_id = ?", (equipo_id,)) as cur:
+            return await cur.fetchall()

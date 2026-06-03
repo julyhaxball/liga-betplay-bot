@@ -8,7 +8,8 @@ from database import (
     fichar_jugador, liberar_jugador, get_equipo_by_nombre, get_equipo_by_id,
     get_equipo_by_rol, crear_partido, get_fixture, cargar_resultado,
     generar_fixture_automatico, crear_oferta, get_oferta, get_ofertas_pendientes,
-    aceptar_oferta, rechazar_oferta, get_jugador_by_id
+    aceptar_oferta, rechazar_oferta, get_jugador_by_id,
+    agregar_sub_dt, quitar_sub_dt, get_equipo_by_sub_dt, get_sub_dts
 )
 
 TOKEN = os.getenv("DISCORD_TOKEN", "TU_TOKEN_AQUI")
@@ -24,6 +25,16 @@ intents.message_content = True
 intents.members = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 tree = bot.tree
+
+async def get_equipo_dt_o_sub(discord_id: str):
+    """Retorna el equipo si el usuario es DT principal o sub DT."""
+    equipo = await get_equipo_by_discord(discord_id)
+    if equipo:
+        return equipo, True  # (equipo, es_principal)
+    equipo = await get_equipo_by_sub_dt(discord_id)
+    if equipo:
+        return equipo, False
+    return None, False
 
 def es_admin(interaction: discord.Interaction) -> bool:
     if interaction.user.guild_permissions.administrator:
@@ -138,7 +149,7 @@ async def ver_equipo(interaction: discord.Interaction, nombre: str):
     app_commands.Choice(name="Delantero (DEL)", value="DEL"),
 ])
 async def inscribir_jugador_cmd(interaction: discord.Interaction, nombre: str, posicion: str, dorsal: int):
-    equipo = await get_equipo_by_discord(str(interaction.user.id))
+    equipo, _ = await get_equipo_dt_o_sub(str(interaction.user.id))
     if not equipo:
         await interaction.response.send_message(embed=embed_error("No tienes equipo. Usa `/registrar` primero."), ephemeral=True)
         return
@@ -157,7 +168,7 @@ async def inscribir_jugador_cmd(interaction: discord.Interaction, nombre: str, p
 @tree.command(name="liberar_jugador", description="Libera un jugador de tu plantilla al mercado libre")
 @app_commands.describe(nombre="Nombre del jugador a liberar")
 async def liberar_jugador_cmd(interaction: discord.Interaction, nombre: str):
-    equipo = await get_equipo_by_discord(str(interaction.user.id))
+    equipo, _ = await get_equipo_dt_o_sub(str(interaction.user.id))
     if not equipo:
         await interaction.response.send_message(embed=embed_error("No tienes equipo."), ephemeral=True)
         return
@@ -173,7 +184,7 @@ async def liberar_jugador_cmd(interaction: discord.Interaction, nombre: str):
 @tree.command(name="fichar", description="Ficha un jugador libre del mercado")
 @app_commands.describe(nombre="Nombre del jugador a fichar", dorsal="Dorsal que le asignarás")
 async def fichar_cmd(interaction: discord.Interaction, nombre: str, dorsal: int):
-    equipo = await get_equipo_by_discord(str(interaction.user.id))
+    equipo, _ = await get_equipo_dt_o_sub(str(interaction.user.id))
     if not equipo:
         await interaction.response.send_message(embed=embed_error("No tienes equipo."), ephemeral=True)
         return
@@ -221,7 +232,7 @@ async def mercado(interaction: discord.Interaction):
     monto="Cantidad en dólares que ofreces (ej: 5000000)"
 )
 async def ofertar(interaction: discord.Interaction, equipo_rival: discord.Role, jugador: str, monto: int):
-    equipo_comprador = await get_equipo_by_discord(str(interaction.user.id))
+    equipo_comprador, _ = await get_equipo_dt_o_sub(str(interaction.user.id))
     if not equipo_comprador:
         await interaction.response.send_message(embed=embed_error("No tienes equipo registrado."), ephemeral=True)
         return
@@ -545,6 +556,46 @@ async def resetear_liga(interaction: discord.Interaction):
     await interaction.response.send_message(embed=embed_ok("🔄 Liga reseteada", "Todos los datos han sido borrados. ¡Nueva temporada!"))
 
 
+
+@tree.command(name="agregar_sub_dt", description="Agrega un sub DT a tu equipo")
+@app_commands.describe(usuario="Usuario de Discord que será sub DT")
+async def agregar_sub_dt_cmd(interaction: discord.Interaction, usuario: discord.Member):
+    equipo = await get_equipo_by_discord(str(interaction.user.id))
+    if not equipo:
+        await interaction.response.send_message(embed=embed_error("Solo el DT principal puede agregar sub DTs."), ephemeral=True)
+        return
+    if usuario.id == interaction.user.id:
+        await interaction.response.send_message(embed=embed_error("No puedes agregarte a ti mismo como sub DT."), ephemeral=True)
+        return
+    # Verificar que no sea DT de otro equipo
+    otro = await get_equipo_by_discord(str(usuario.id))
+    if otro:
+        await interaction.response.send_message(embed=embed_error(f"**{usuario.display_name}** ya es DT de **{otro['nombre']}**."), ephemeral=True)
+        return
+    sub_dts = await get_sub_dts(equipo["id"])
+    if len(sub_dts) >= 2:
+        await interaction.response.send_message(embed=embed_error("Ya tienes 2 sub DTs, ese es el máximo."), ephemeral=True)
+        return
+    ok = await agregar_sub_dt(equipo["id"], str(usuario.id))
+    if not ok:
+        await interaction.response.send_message(embed=embed_error(f"**{usuario.display_name}** ya es sub DT de tu equipo."), ephemeral=True)
+        return
+    emb = embed_ok("👥 Sub DT agregado", f"**{usuario.display_name}** ahora es sub DT de **{equipo['nombre']}**.\nPuede fichar, inscribir y liberar jugadores.")
+    await interaction.response.send_message(embed=emb)
+
+
+@tree.command(name="quitar_sub_dt", description="Quita un sub DT de tu equipo")
+@app_commands.describe(usuario="Sub DT a quitar")
+async def quitar_sub_dt_cmd(interaction: discord.Interaction, usuario: discord.Member):
+    equipo = await get_equipo_by_discord(str(interaction.user.id))
+    if not equipo:
+        await interaction.response.send_message(embed=embed_error("Solo el DT principal puede quitar sub DTs."), ephemeral=True)
+        return
+    await quitar_sub_dt(equipo["id"], str(usuario.id))
+    emb = embed_ok("👥 Sub DT eliminado", f"**{usuario.display_name}** ya no es sub DT de **{equipo['nombre']}**.")
+    await interaction.response.send_message(embed=emb)
+
+
 @tree.command(name="ayuda", description="Lista todos los comandos disponibles")
 async def ayuda(interaction: discord.Interaction):
     emb = discord.Embed(title="📖 Comandos del bot de liga", color=COLOR_INFO)
@@ -554,6 +605,10 @@ async def ayuda(interaction: discord.Interaction):
         "`/ver_equipo` — Ver el equipo de otro DT\n"
         "`/tabla` — Tabla de posiciones\n"
         "`/fixture` — Ver el fixture"
+    ), inline=False)
+    emb.add_field(name="👥 Sub DT", value=(
+        "`/agregar_sub_dt` — Agregar un sub DT a tu equipo\n"
+        "`/quitar_sub_dt` — Quitar un sub DT de tu equipo"
     ), inline=False)
     emb.add_field(name="🤝 Jugadores", value=(
         "`/inscribir_jugador` — Añadir jugador a tu plantilla\n"
