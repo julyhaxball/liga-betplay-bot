@@ -1,4 +1,5 @@
 import aiosqlite
+import datetime
 
 DB_PATH = "liga.db"
 PRESUPUESTO_INICIAL = 50_000_000
@@ -22,7 +23,6 @@ async def init_db():
                 gc INTEGER DEFAULT 0,
                 creado_en TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
-
             CREATE TABLE IF NOT EXISTS jugadores (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 nombre TEXT NOT NULL,
@@ -30,9 +30,13 @@ async def init_db():
                 equipo_id INTEGER,
                 dorsal INTEGER,
                 libre INTEGER DEFAULT 0,
+                sueldo INTEGER DEFAULT 0,
+                valor INTEGER DEFAULT 0,
+                contrato_inicio TEXT DEFAULT NULL,
+                pagos_realizados INTEGER DEFAULT 0,
+                discord_id TEXT DEFAULT NULL,
                 FOREIGN KEY (equipo_id) REFERENCES equipos(id)
             );
-
             CREATE TABLE IF NOT EXISTS partidos (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 jornada INTEGER NOT NULL,
@@ -44,15 +48,6 @@ async def init_db():
                 FOREIGN KEY (local_id) REFERENCES equipos(id),
                 FOREIGN KEY (visitante_id) REFERENCES equipos(id)
             );
-
-            CREATE TABLE IF NOT EXISTS sub_dts (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                equipo_id INTEGER NOT NULL,
-                discord_id TEXT NOT NULL,
-                UNIQUE(equipo_id, discord_id),
-                FOREIGN KEY (equipo_id) REFERENCES equipos(id)
-            );
-
             CREATE TABLE IF NOT EXISTS ofertas (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 jugador_id INTEGER NOT NULL,
@@ -65,46 +60,60 @@ async def init_db():
                 FOREIGN KEY (equipo_comprador_id) REFERENCES equipos(id),
                 FOREIGN KEY (equipo_vendedor_id) REFERENCES equipos(id)
             );
+            CREATE TABLE IF NOT EXISTS sub_dts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                equipo_id INTEGER NOT NULL,
+                discord_id TEXT NOT NULL,
+                UNIQUE(equipo_id, discord_id),
+                FOREIGN KEY (equipo_id) REFERENCES equipos(id)
+            );
         """)
-        # Columnas opcionales para bases ya existentes
+        await db.commit()
+        # Migraciones para bases existentes
         for col, tipo, default in [
             ("rol_id", "TEXT", "NULL"),
             ("presupuesto", "INTEGER", str(PRESUPUESTO_INICIAL)),
+            ("sueldo", "INTEGER", "0"),
+            ("valor", "INTEGER", "0"),
+            ("contrato_inicio", "TEXT", "NULL"),
+            ("pagos_realizados", "INTEGER", "0"),
+            ("discord_id", "TEXT", "NULL"),
         ]:
             try:
-                await db.execute(f"ALTER TABLE equipos ADD COLUMN {col} {tipo} DEFAULT {default}")
+                tbl = "equipos" if col in ("rol_id", "presupuesto") else "jugadores"
+                await db.execute(f"ALTER TABLE {tbl} ADD COLUMN {col} {tipo} DEFAULT {default}")
                 await db.commit()
             except:
                 pass
 
-async def get_equipo_by_discord(discord_id: str):
+async def get_equipo_by_discord(discord_id):
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
-        async with db.execute("SELECT * FROM equipos WHERE discord_id = ?", (discord_id,)) as cur:
+        async with db.execute("SELECT * FROM equipos WHERE discord_id=?", (discord_id,)) as cur:
             return await cur.fetchone()
 
-async def get_equipo_by_id(equipo_id: int):
+async def get_equipo_by_id(equipo_id):
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
-        async with db.execute("SELECT * FROM equipos WHERE id = ?", (equipo_id,)) as cur:
+        async with db.execute("SELECT * FROM equipos WHERE id=?", (equipo_id,)) as cur:
             return await cur.fetchone()
 
-async def get_equipo_by_nombre(nombre: str):
+async def get_equipo_by_nombre(nombre):
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
-        async with db.execute("SELECT * FROM equipos WHERE LOWER(nombre) = LOWER(?)", (nombre,)) as cur:
+        async with db.execute("SELECT * FROM equipos WHERE LOWER(nombre)=LOWER(?)", (nombre,)) as cur:
             return await cur.fetchone()
 
-async def get_equipo_by_rol(rol_id: str):
+async def get_equipo_by_rol(rol_id):
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
-        async with db.execute("SELECT * FROM equipos WHERE rol_id = ?", (rol_id,)) as cur:
+        async with db.execute("SELECT * FROM equipos WHERE rol_id=?", (rol_id,)) as cur:
             return await cur.fetchone()
 
-async def crear_equipo(discord_id: str, nombre: str, dt_nombre: str, rol_id: str = None):
+async def crear_equipo(discord_id, nombre, dt_nombre, rol_id=None):
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute(
-            "INSERT INTO equipos (discord_id, nombre, dt_nombre, rol_id, presupuesto) VALUES (?, ?, ?, ?, ?)",
+            "INSERT INTO equipos (discord_id, nombre, dt_nombre, rol_id, presupuesto) VALUES (?,?,?,?,?)",
             (discord_id, nombre, dt_nombre, rol_id, PRESUPUESTO_INICIAL)
         )
         await db.commit()
@@ -112,91 +121,96 @@ async def crear_equipo(discord_id: str, nombre: str, dt_nombre: str, rol_id: str
 async def get_todos_equipos():
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
-        async with db.execute("SELECT * FROM equipos ORDER BY puntos DESC, (gf - gc) DESC, gf DESC") as cur:
+        async with db.execute("SELECT * FROM equipos ORDER BY puntos DESC, (gf-gc) DESC, gf DESC") as cur:
             return await cur.fetchall()
 
-async def inscribir_jugador(nombre: str, posicion: str, equipo_id: int, dorsal: int):
-    async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute("INSERT INTO jugadores (nombre, posicion, equipo_id, dorsal) VALUES (?, ?, ?, ?)", (nombre, posicion, equipo_id, dorsal))
-        await db.commit()
-
-async def get_plantilla(equipo_id: int):
+async def get_roles_equipos():
+    """Retorna lista de rol_ids de todos los equipos registrados."""
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
-        async with db.execute("SELECT * FROM jugadores WHERE equipo_id = ? ORDER BY dorsal", (equipo_id,)) as cur:
+        async with db.execute("SELECT rol_id FROM equipos WHERE rol_id IS NOT NULL") as cur:
+            rows = await cur.fetchall()
+            return [r["rol_id"] for r in rows]
+
+async def inscribir_jugador(nombre, posicion, equipo_id, dorsal, discord_id=None):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "INSERT INTO jugadores (nombre, posicion, equipo_id, dorsal, discord_id) VALUES (?,?,?,?,?)",
+            (nombre, posicion, equipo_id, dorsal, discord_id)
+        )
+        await db.commit()
+
+async def get_plantilla(equipo_id):
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute("SELECT * FROM jugadores WHERE equipo_id=? ORDER BY dorsal", (equipo_id,)) as cur:
             return await cur.fetchall()
 
 async def get_jugadores_libres():
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
-        async with db.execute("SELECT * FROM jugadores WHERE libre = 1 OR equipo_id IS NULL") as cur:
+        async with db.execute("SELECT * FROM jugadores WHERE libre=1 OR equipo_id IS NULL") as cur:
             return await cur.fetchall()
 
-async def get_jugador_by_nombre(nombre: str):
+async def get_jugador_by_nombre(nombre):
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
-        async with db.execute("SELECT * FROM jugadores WHERE LOWER(nombre) = LOWER(?)", (nombre,)) as cur:
+        async with db.execute("SELECT * FROM jugadores WHERE LOWER(nombre)=LOWER(?)", (nombre,)) as cur:
             return await cur.fetchone()
 
-async def get_jugador_by_id(jugador_id: int):
+async def get_jugador_by_id(jugador_id):
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
-        async with db.execute("SELECT * FROM jugadores WHERE id = ?", (jugador_id,)) as cur:
+        async with db.execute("SELECT * FROM jugadores WHERE id=?", (jugador_id,)) as cur:
             return await cur.fetchone()
 
-async def fichar_jugador(jugador_id: int, nuevo_equipo_id: int):
+async def fichar_jugador(jugador_id, nuevo_equipo_id):
     async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute("UPDATE jugadores SET equipo_id = ?, libre = 0 WHERE id = ?", (nuevo_equipo_id, jugador_id))
+        await db.execute("UPDATE jugadores SET equipo_id=?, libre=0 WHERE id=?", (nuevo_equipo_id, jugador_id))
         await db.commit()
 
-async def liberar_jugador(jugador_id: int):
+async def liberar_jugador(jugador_id):
     async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute("UPDATE jugadores SET equipo_id = NULL, libre = 1 WHERE id = ?", (jugador_id,))
+        await db.execute("UPDATE jugadores SET equipo_id=NULL, libre=1, sueldo=0, contrato_inicio=NULL WHERE id=?", (jugador_id,))
         await db.commit()
 
-async def crear_partido(jornada: int, local_id: int, visitante_id: int):
+async def crear_partido(jornada, local_id, visitante_id):
     async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute("INSERT INTO partidos (jornada, local_id, visitante_id) VALUES (?, ?, ?)", (jornada, local_id, visitante_id))
+        await db.execute("INSERT INTO partidos (jornada, local_id, visitante_id) VALUES (?,?,?)", (jornada, local_id, visitante_id))
         await db.commit()
 
-async def get_fixture(jornada: int = None):
+async def get_fixture(jornada=None):
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         if jornada:
             async with db.execute(
-                """SELECT p.*, el.nombre as local_nombre, ev.nombre as visitante_nombre
-                   FROM partidos p JOIN equipos el ON p.local_id = el.id
-                   JOIN equipos ev ON p.visitante_id = ev.id
-                   WHERE p.jornada = ? ORDER BY p.id""", (jornada,)
+                "SELECT p.*,el.nombre as local_nombre,ev.nombre as visitante_nombre FROM partidos p JOIN equipos el ON p.local_id=el.id JOIN equipos ev ON p.visitante_id=ev.id WHERE p.jornada=? ORDER BY p.id", (jornada,)
             ) as cur:
                 return await cur.fetchall()
         else:
             async with db.execute(
-                """SELECT p.*, el.nombre as local_nombre, ev.nombre as visitante_nombre
-                   FROM partidos p JOIN equipos el ON p.local_id = el.id
-                   JOIN equipos ev ON p.visitante_id = ev.id
-                   WHERE p.jugado = 0 ORDER BY p.jornada, p.id LIMIT 20"""
+                "SELECT p.*,el.nombre as local_nombre,ev.nombre as visitante_nombre FROM partidos p JOIN equipos el ON p.local_id=el.id JOIN equipos ev ON p.visitante_id=ev.id WHERE p.jugado=0 ORDER BY p.jornada,p.id LIMIT 20"
             ) as cur:
                 return await cur.fetchall()
 
-async def cargar_resultado(partido_id: int, goles_local: int, goles_visitante: int):
+async def cargar_resultado(partido_id, goles_local, goles_visitante):
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
-        async with db.execute("SELECT * FROM partidos WHERE id = ?", (partido_id,)) as cur:
+        async with db.execute("SELECT * FROM partidos WHERE id=?", (partido_id,)) as cur:
             partido = await cur.fetchone()
         if not partido:
             return False
-        await db.execute("UPDATE partidos SET goles_local=?, goles_visitante=?, jugado=1 WHERE id=?", (goles_local, goles_visitante, partido_id))
+        await db.execute("UPDATE partidos SET goles_local=?,goles_visitante=?,jugado=1 WHERE id=?", (goles_local, goles_visitante, partido_id))
         def stats(gf, gc):
-            if gf > gc: return 3, 1, 0, 0
-            elif gf == gc: return 1, 0, 1, 0
-            else: return 0, 0, 0, 1
-        pts_l, pg_l, pe_l, pp_l = stats(goles_local, goles_visitante)
-        pts_v, pg_v, pe_v, pp_v = stats(goles_visitante, goles_local)
-        await db.execute("UPDATE equipos SET puntos=puntos+?, pj=pj+1, pg=pg+?, pe=pe+?, pp=pp+?, gf=gf+?, gc=gc+? WHERE id=?",
-            (pts_l, pg_l, pe_l, pp_l, goles_local, goles_visitante, partido["local_id"]))
-        await db.execute("UPDATE equipos SET puntos=puntos+?, pj=pj+1, pg=pg+?, pe=pe+?, pp=pp+?, gf=gf+?, gc=gc+? WHERE id=?",
-            (pts_v, pg_v, pe_v, pp_v, goles_visitante, goles_local, partido["visitante_id"]))
+            if gf>gc: return 3,1,0,0
+            elif gf==gc: return 1,0,1,0
+            else: return 0,0,0,1
+        pts_l,pg_l,pe_l,pp_l = stats(goles_local, goles_visitante)
+        pts_v,pg_v,pe_v,pp_v = stats(goles_visitante, goles_local)
+        await db.execute("UPDATE equipos SET puntos=puntos+?,pj=pj+1,pg=pg+?,pe=pe+?,pp=pp+?,gf=gf+?,gc=gc+? WHERE id=?",
+            (pts_l,pg_l,pe_l,pp_l,goles_local,goles_visitante,partido["local_id"]))
+        await db.execute("UPDATE equipos SET puntos=puntos+?,pj=pj+1,pg=pg+?,pe=pe+?,pp=pp+?,gf=gf+?,gc=gc+? WHERE id=?",
+            (pts_v,pg_v,pe_v,pp_v,goles_visitante,goles_local,partido["visitante_id"]))
         await db.commit()
         return True
 
@@ -215,11 +229,11 @@ async def generar_fixture_automatico():
         await db.commit()
     for vuelta in range(2):
         ronda_ids = ids[:]
-        for ronda in range(n - 1):
-            mitad = n // 2
+        for ronda in range(n-1):
+            mitad = n//2
             for i in range(mitad):
                 local = ronda_ids[i]
-                visitante = ronda_ids[n - 1 - i]
+                visitante = ronda_ids[n-1-i]
                 if local is not None and visitante is not None:
                     if vuelta == 1:
                         local, visitante = visitante, local
@@ -229,88 +243,105 @@ async def generar_fixture_automatico():
             jornada += 1
     return total
 
-# ── Ofertas de fichaje con dinero ─────────────────────────────
-
-async def crear_oferta(jugador_id: int, equipo_comprador_id: int, equipo_vendedor_id: int, monto: int):
+# ── Ofertas ───────────────────────────────────────────────────
+async def crear_oferta(jugador_id, equipo_comprador_id, equipo_vendedor_id, monto):
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute(
-            "INSERT INTO ofertas (jugador_id, equipo_comprador_id, equipo_vendedor_id, monto) VALUES (?, ?, ?, ?)",
+            "INSERT INTO ofertas (jugador_id,equipo_comprador_id,equipo_vendedor_id,monto) VALUES (?,?,?,?)",
             (jugador_id, equipo_comprador_id, equipo_vendedor_id, monto)
         )
         await db.commit()
         async with db.execute("SELECT last_insert_rowid()") as cur:
-            row = await cur.fetchone()
-            return row[0]
+            return (await cur.fetchone())[0]
 
-async def get_oferta(oferta_id: int):
+async def get_oferta(oferta_id):
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
-        async with db.execute("SELECT * FROM ofertas WHERE id = ?", (oferta_id,)) as cur:
+        async with db.execute("SELECT * FROM ofertas WHERE id=?", (oferta_id,)) as cur:
             return await cur.fetchone()
 
-async def get_ofertas_pendientes(equipo_id: int):
+async def get_ofertas_pendientes(equipo_id):
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         async with db.execute(
-            "SELECT * FROM ofertas WHERE equipo_vendedor_id = ? AND estado = 'pendiente' ORDER BY creado_en DESC",
-            (equipo_id,)
+            "SELECT * FROM ofertas WHERE equipo_vendedor_id=? AND estado='pendiente' ORDER BY creado_en DESC", (equipo_id,)
         ) as cur:
             return await cur.fetchall()
 
-async def aceptar_oferta(oferta_id: int):
+async def aceptar_oferta(oferta_id):
     oferta = await get_oferta(oferta_id)
     if not oferta or oferta["estado"] != "pendiente":
         return False
     async with aiosqlite.connect(DB_PATH) as db:
-        # Transferir jugador
-        await db.execute("UPDATE jugadores SET equipo_id = ?, libre = 0 WHERE id = ?",
-            (oferta["equipo_comprador_id"], oferta["jugador_id"]))
-        # Descontar dinero al comprador
-        await db.execute("UPDATE equipos SET presupuesto = presupuesto - ? WHERE id = ?",
+        await db.execute("UPDATE jugadores SET equipo_id=?,libre=0,valor=? WHERE id=?",
+            (oferta["equipo_comprador_id"], oferta["monto"], oferta["jugador_id"]))
+        await db.execute("UPDATE equipos SET presupuesto=presupuesto-? WHERE id=?",
             (oferta["monto"], oferta["equipo_comprador_id"]))
-        # Sumar dinero al vendedor
-        await db.execute("UPDATE equipos SET presupuesto = presupuesto + ? WHERE id = ?",
+        await db.execute("UPDATE equipos SET presupuesto=presupuesto+? WHERE id=?",
             (oferta["monto"], oferta["equipo_vendedor_id"]))
-        # Marcar oferta como aceptada
-        await db.execute("UPDATE ofertas SET estado = 'aceptada' WHERE id = ?", (oferta_id,))
-        # Cancelar otras ofertas pendientes por ese jugador
-        await db.execute("UPDATE ofertas SET estado = 'cancelada' WHERE jugador_id = ? AND id != ? AND estado = 'pendiente'",
+        await db.execute("UPDATE ofertas SET estado='aceptada' WHERE id=?", (oferta_id,))
+        await db.execute("UPDATE ofertas SET estado='cancelada' WHERE jugador_id=? AND id!=? AND estado='pendiente'",
             (oferta["jugador_id"], oferta_id))
         await db.commit()
     return True
 
-async def rechazar_oferta(oferta_id: int):
+async def rechazar_oferta(oferta_id):
     async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute("UPDATE ofertas SET estado = 'rechazada' WHERE id = ?", (oferta_id,))
+        await db.execute("UPDATE ofertas SET estado='rechazada' WHERE id=?", (oferta_id,))
         await db.commit()
 
 # ── Sub DTs ───────────────────────────────────────────────────
-
-async def agregar_sub_dt(equipo_id: int, discord_id: str):
+async def agregar_sub_dt(equipo_id, discord_id):
     async with aiosqlite.connect(DB_PATH) as db:
         try:
-            await db.execute("INSERT INTO sub_dts (equipo_id, discord_id) VALUES (?, ?)", (equipo_id, discord_id))
+            await db.execute("INSERT INTO sub_dts (equipo_id,discord_id) VALUES (?,?)", (equipo_id, discord_id))
             await db.commit()
             return True
         except:
             return False
 
-async def quitar_sub_dt(equipo_id: int, discord_id: str):
+async def quitar_sub_dt(equipo_id, discord_id):
     async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute("DELETE FROM sub_dts WHERE equipo_id = ? AND discord_id = ?", (equipo_id, discord_id))
+        await db.execute("DELETE FROM sub_dts WHERE equipo_id=? AND discord_id=?", (equipo_id, discord_id))
         await db.commit()
 
-async def get_equipo_by_sub_dt(discord_id: str):
+async def get_equipo_by_sub_dt(discord_id):
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         async with db.execute(
-            "SELECT e.* FROM equipos e JOIN sub_dts s ON e.id = s.equipo_id WHERE s.discord_id = ?",
-            (discord_id,)
+            "SELECT e.* FROM equipos e JOIN sub_dts s ON e.id=s.equipo_id WHERE s.discord_id=?", (discord_id,)
         ) as cur:
             return await cur.fetchone()
 
-async def get_sub_dts(equipo_id: int):
+async def get_sub_dts(equipo_id):
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
-        async with db.execute("SELECT * FROM sub_dts WHERE equipo_id = ?", (equipo_id,)) as cur:
+        async with db.execute("SELECT * FROM sub_dts WHERE equipo_id=?", (equipo_id,)) as cur:
             return await cur.fetchall()
+
+# ── Contratos y sueldos ───────────────────────────────────────
+async def activar_contrato(jugador_id, sueldo):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "UPDATE jugadores SET sueldo=?,contrato_inicio=datetime('now'),pagos_realizados=0 WHERE id=?",
+            (sueldo, jugador_id)
+        )
+        await db.commit()
+
+async def get_todos_jugadores_con_sueldo():
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            "SELECT j.*,e.discord_id as dt_discord_id FROM jugadores j JOIN equipos e ON j.equipo_id=e.id WHERE j.sueldo>0 AND j.contrato_inicio IS NOT NULL"
+        ) as cur:
+            return await cur.fetchall()
+
+async def incrementar_pago(jugador_id):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("UPDATE jugadores SET pagos_realizados=pagos_realizados+1 WHERE id=?", (jugador_id,))
+        await db.commit()
+
+async def dar_presupuesto_mensual():
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("UPDATE equipos SET presupuesto=presupuesto+50000000")
+        await db.commit()
