@@ -163,7 +163,7 @@ async def inscribir_jugador_cmd(interaction: discord.Interaction, jugador: disco
         await interaction.response.send_message(embed=embed_error("Ya tienes 25 jugadores."), ephemeral=True); return
     await inscribir_jugador(jugador.display_name, posicion, equipo["id"], dorsal, str(jugador.id))
     jug = await get_jugador_by_nombre(jugador.display_name)
-    rol = interaction.guild.get_role(int(equipo["rol_id"])) if equipo.get("rol_id") else None
+    rol = interaction.guild.get_role(int(equipo["rol_id"])) if equipo["rol_id"] else None
     emb_oferta = discord.Embed(
         title="📋 Oferta de contrato",
         description=(f"**{equipo['nombre']}** te ofrece un contrato:\n\n"
@@ -484,7 +484,10 @@ async def eliminar_mi_equipo(interaction: discord.Interaction):
         await interaction.response.send_message(embed=embed_error("No tienes equipo."), ephemeral=True); return
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute("DELETE FROM jugadores WHERE equipo_id=?", (equipo["id"],))
-        await db.execute("DELETE FROM ofertas WHERE equipo_comprador_id=? OR equipo_vendedor_id=?", (equipo["id"],equipo["id"]))
+        try:
+            await db.execute("DELETE FROM ofertas WHERE equipo_comprador_id=? OR equipo_vendedor_id=?", (equipo["id"],equipo["id"]))
+        except:
+            pass
         await db.execute("DELETE FROM sub_dts WHERE equipo_id=?", (equipo["id"],))
         await db.execute("DELETE FROM equipos WHERE id=?", (equipo["id"],))
         await db.commit()
@@ -500,7 +503,10 @@ async def resetear_equipo(interaction: discord.Interaction, rol: discord.Role):
         await interaction.response.send_message(embed=embed_error(f"No existe equipo con rol {rol.mention}."), ephemeral=True); return
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute("DELETE FROM jugadores WHERE equipo_id=?", (equipo["id"],))
-        await db.execute("DELETE FROM ofertas WHERE equipo_comprador_id=? OR equipo_vendedor_id=?", (equipo["id"],equipo["id"]))
+        try:
+            await db.execute("DELETE FROM ofertas WHERE equipo_comprador_id=? OR equipo_vendedor_id=?", (equipo["id"],equipo["id"]))
+        except:
+            pass
         await db.execute("DELETE FROM sub_dts WHERE equipo_id=?", (equipo["id"],))
         await db.execute("DELETE FROM equipos WHERE id=?", (equipo["id"],))
         await db.commit()
@@ -560,12 +566,150 @@ async def scheduler_presupuesto_mensual():
         except Exception as e:
             print(f"Error scheduler presupuesto: {e}")
 
+
+# ══════════════════════════════════════════════════════════════
+#  SISTEMA DE TICKETS
+# ══════════════════════════════════════════════════════════════
+
+STAFF_ROLES = ["🎶 | Moderador", "Fundador", "👮‍♂️ | Equipo Staff", "🍉 | Administrador", "👑 | Owner"]
+
+TICKET_TIPOS = {
+    "alianza": ("🤝", "ALIANZAS", "Hacer una alianza con nosotros"),
+    "reporte": ("❗", "REPORTES", "Reportar algo que no sea apto"),
+    "postulacion": ("👥", "POSTULACIONES", "Postularse para un cargo"),
+    "inscribir": ("📋", "INSCRIBIR EQUIPO", "Inscribir tu equipo en la liga"),
+    "otro": ("❓", "OTRO", "Cualquier otra consulta"),
+}
+
+class TicketSelect(discord.ui.Select):
+    def __init__(self):
+        options = [
+            discord.SelectOption(label="ALIANZAS", value="alianza", emoji="🤝", description="Hacer una alianza con nosotros"),
+            discord.SelectOption(label="REPORTES", value="reporte", emoji="❗", description="Reportar algo que no sea apto"),
+            discord.SelectOption(label="POSTULACIONES", value="postulacion", emoji="👥", description="Postularse para un cargo"),
+            discord.SelectOption(label="INSCRIBIR EQUIPO", value="inscribir", emoji="📋", description="Inscribir tu equipo en la liga"),
+            discord.SelectOption(label="OTRO", value="otro", emoji="❓", description="Cualquier otra consulta"),
+        ]
+        super().__init__(placeholder="Selecciona el tipo de ticket...", options=options, min_values=1, max_values=1)
+
+    async def callback(self, interaction: discord.Interaction):
+        tipo = self.values[0]
+        emoji, nombre, desc = TICKET_TIPOS[tipo]
+        guild = interaction.guild
+        user = interaction.user
+
+        # Verificar si ya tiene un ticket abierto
+        canal_existente = discord.utils.get(guild.text_channels, name=f"ticket-{user.name.lower()[:20]}")
+        if canal_existente:
+            await interaction.response.send_message(
+                f"Ya tienes un ticket abierto en {canal_existente.mention}.", ephemeral=True
+            )
+            return
+
+        # Permisos del canal
+        overwrites = {
+            guild.default_role: discord.PermissionOverwrite(read_messages=False),
+            user: discord.PermissionOverwrite(read_messages=True, send_messages=True),
+            guild.me: discord.PermissionOverwrite(read_messages=True, send_messages=True, manage_channels=True),
+        }
+        # Agregar permisos a los roles de staff
+        for rol_nombre in STAFF_ROLES:
+            rol = discord.utils.get(guild.roles, name=rol_nombre)
+            if rol:
+                overwrites[rol] = discord.PermissionOverwrite(read_messages=True, send_messages=True)
+
+        # Buscar o crear categoría Tickets
+        categoria = discord.utils.get(guild.categories, name="TICKETS")
+        if not categoria:
+            categoria = await guild.create_category("TICKETS")
+
+        canal = await guild.create_text_channel(
+            name=f"ticket-{user.name[:20]}",
+            category=categoria,
+            overwrites=overwrites
+        )
+
+        # Mensaje en el canal del ticket
+        staff_mentions = []
+        for rol_nombre in STAFF_ROLES:
+            rol = discord.utils.get(guild.roles, name=rol_nombre)
+            if rol:
+                staff_mentions.append(rol.mention)
+
+        emb = discord.Embed(
+            title=f"{emoji} Ticket — {nombre}",
+            description=(
+                f"**Usuario:** {user.mention}\n"
+                f"**Tipo:** {nombre}\n"
+                f"**Descripción:** {desc}\n\n"
+                f"El staff te atenderá en breve. Para cerrar el ticket usa el botón de abajo."
+            ),
+            color=COLOR_AMARILLO
+        )
+        emb.set_footer(text=f"Ticket abierto por {user.display_name}")
+
+        view = CerrarTicketView()
+        msg = await canal.send(
+            content=" ".join(staff_mentions) + f" | {user.mention}",
+            embed=emb,
+            view=view
+        )
+        await msg.pin()
+
+        await interaction.response.send_message(
+            f"✅ Tu ticket fue creado en {canal.mention}", ephemeral=True
+        )
+
+
+class CerrarTicketView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(label="🔒 Cerrar ticket", style=discord.ButtonStyle.danger, custom_id="cerrar_ticket")
+    async def cerrar(self, interaction: discord.Interaction, button: discord.ui.Button):
+        es_staff = any(r.name in STAFF_ROLES for r in interaction.user.roles)
+        if not es_staff and not interaction.user.guild_permissions.administrator:
+            await interaction.response.send_message("Solo el staff puede cerrar tickets.", ephemeral=True)
+            return
+        await interaction.response.send_message("🔒 Cerrando ticket en 3 segundos...")
+        await asyncio.sleep(3)
+        await interaction.channel.delete()
+
+
+class TicketView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+        self.add_item(TicketSelect())
+
+
+@tree.command(name="setup_tickets", description="[Admin] Envía el panel de tickets en este canal")
+async def setup_tickets(interaction: discord.Interaction):
+    if not es_admin(interaction):
+        await interaction.response.send_message(embed=embed_error("Solo admins."), ephemeral=True)
+        return
+    emb = discord.Embed(
+        title="🎫 Help & Support",
+        description=(
+            "Reclama un ticket según lo que deseas\n\n"
+            "🤝 **ALIANZAS** — Hacer una alianza con nosotros\n"
+            "❗ **REPORTES** — Reportar algo que no sea apto\n"
+            "👥 **POSTULACIONES** — Postularse para un cargo\n"
+            "📋 **INSCRIBIR EQUIPO** — Inscribir tu equipo en la liga\n"
+            "❓ **OTRO** — Cualquier otra consulta"
+        ),
+        color=COLOR_AMARILLO
+    )
+    await interaction.channel.send(embed=emb, view=TicketView())
+    await interaction.response.send_message("✅ Panel de tickets enviado.", ephemeral=True)
+
 @bot.event
 async def on_ready():
     await init_db()
     await tree.sync()
     print(f"✅ Bot conectado como {bot.user} | {len(bot.guilds)} servidor(es)")
     await bot.change_presence(activity=discord.Game(name="⚽ Liga activa | /ayuda"))
+    bot.add_view(TicketView())
+    bot.add_view(CerrarTicketView())
     asyncio.ensure_future(scheduler_sueldos())
     asyncio.ensure_future(scheduler_presupuesto_mensual())
 
