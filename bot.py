@@ -599,14 +599,18 @@ TICKET_TIPOS = {
 
 class TicketSelect(discord.ui.Select):
     def __init__(self):
-        options = [
+        super().__init__(
+            placeholder="Selecciona el tipo de ticket...",
+            custom_id="ticket_select",
+            min_values=1,
+            max_values=1,
+            options=[
             discord.SelectOption(label="ALIANZAS", value="alianza", emoji="🤝", description="Hacer una alianza con nosotros"),
             discord.SelectOption(label="REPORTES", value="reporte", emoji="❗", description="Reportar algo que no sea apto"),
             discord.SelectOption(label="POSTULACIONES", value="postulacion", emoji="👥", description="Postularse para un cargo"),
             discord.SelectOption(label="INSCRIBIR EQUIPO", value="inscribir", emoji="📋", description="Inscribir tu equipo en la liga"),
             discord.SelectOption(label="OTRO", value="otro", emoji="❓", description="Cualquier otra consulta"),
-        ]
-        super().__init__(placeholder="Selecciona el tipo de ticket...", options=options, min_values=1, max_values=1)
+        ])
 
     async def callback(self, interaction: discord.Interaction):
         tipo = self.values[0]
@@ -697,6 +701,9 @@ class TicketView(discord.ui.View):
         super().__init__(timeout=None)
         self.add_item(TicketSelect())
 
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        return True
+
 
 @tree.command(name="setup_tickets", description="[Admin] Envía el panel de tickets en este canal")
 async def setup_tickets(interaction: discord.Interaction):
@@ -724,8 +731,6 @@ async def on_ready():
     await tree.sync()
     print(f"✅ Bot conectado como {bot.user} | {len(bot.guilds)} servidor(es)")
     await bot.change_presence(activity=discord.Game(name="⚽ Liga activa | /ayuda"))
-    bot.add_view(TicketView())
-    bot.add_view(CerrarTicketView())
     asyncio.ensure_future(scheduler_sueldos())
     asyncio.ensure_future(scheduler_presupuesto_mensual())
 
