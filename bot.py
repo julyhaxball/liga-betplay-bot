@@ -132,16 +132,18 @@ class ContratoView(discord.ui.View):
         for item in self.children: item.disabled = True
         await interaction.response.edit_message(embed=emb, view=self)
 
-        # Publicar en #fichajes
-        canal_fichajes = discord.utils.get(interaction.guild.text_channels, name="fichajes")
-        if canal_fichajes:
-            emb_pub = embed_ok(
-                "📋 Nuevo jugador inscrito",
-                f"**{self.nombre}** ({self.posicion}) · Dorsal #{self.dorsal}\n"
-                f"Se une a **{self.equipo['nombre']}**\n"
-                f"💰 Sueldo semanal: **{fmt(self.sueldo)}**"
-            )
-            await canal_fichajes.send(embed=emb_pub)
+        # Publicar en #fichajes (buscar en todos los guilds del bot)
+        for guild in bot.guilds:
+            canal_fichajes = discord.utils.get(guild.text_channels, name="fichajes")
+            if canal_fichajes:
+                emb_pub = embed_ok(
+                    "📋 Nuevo jugador inscrito",
+                    f"**{self.nombre}** ({self.posicion}) · Dorsal #{self.dorsal}\n"
+                    f"Se une a **{self.equipo['nombre']}**\n"
+                    f"💰 Sueldo semanal: **{fmt(self.sueldo)}**"
+                )
+                await canal_fichajes.send(embed=emb_pub)
+                break
 
     @discord.ui.button(label="❌ Rechazar contrato", style=discord.ButtonStyle.danger)
     async def rechazar(self, interaction: discord.Interaction, button: discord.ui.Button):
