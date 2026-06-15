@@ -124,26 +124,29 @@ class ContratoView(discord.ui.View):
     @discord.ui.button(label="✅ Aceptar contrato", style=discord.ButtonStyle.success)
     async def aceptar(self, interaction: discord.Interaction, button: discord.ui.Button):
         await activar_contrato(self.jugador_id, self.sueldo)
-        if self.rol:
-            try: await interaction.user.add_roles(self.rol)
-            except: pass
-        # Quitar rol agente libre
-        try:
-            for guild in bot.guilds:
-                member = guild.get_member(interaction.user.id)
-                if member:
+        # Buscar guild del bot
+        guild = bot.guilds[0] if bot.guilds else None
+        if guild:
+            member = guild.get_member(interaction.user.id)
+            if member:
+                # Asignar rol del equipo
+                if self.equipo["rol_id"]:
+                    try:
+                        rol = guild.get_role(int(self.equipo["rol_id"]))
+                        if rol: await member.add_roles(rol)
+                    except: pass
+                # Quitar rol agente libre
+                try:
                     rol_libre = discord.utils.get(guild.roles, name="agente libre")
                     if rol_libre and rol_libre in member.roles:
                         await member.remove_roles(rol_libre)
-                    break
-        except: pass
+                except: pass
         emb = embed_ok("✅ ¡Contrato aceptado!", f"Bienvenido a **{self.equipo['nombre']}**, **{self.nombre}**!\nDorsal: #{self.dorsal} · {self.posicion}\n💰 Sueldo semanal: **{fmt(self.sueldo)}**")
         self.stop()
         for item in self.children: item.disabled = True
         await interaction.response.edit_message(embed=emb, view=self)
-
-        # Publicar en #fichajes (buscar en todos los guilds del bot)
-        for guild in bot.guilds:
+        # Publicar en #fichajes
+        if guild:
             canal_fichajes = discord.utils.get(guild.text_channels, name="fichajes")
             if canal_fichajes:
                 emb_pub = embed_ok(
@@ -153,7 +156,6 @@ class ContratoView(discord.ui.View):
                     f"💰 Sueldo semanal: **{fmt(self.sueldo)}**"
                 )
                 await canal_fichajes.send(embed=emb_pub)
-                break
 
     @discord.ui.button(label="❌ Rechazar contrato", style=discord.ButtonStyle.danger)
     async def rechazar(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -164,6 +166,14 @@ class ContratoView(discord.ui.View):
         self.stop()
         for item in self.children: item.disabled = True
         await interaction.response.edit_message(embed=emb, view=self)
+        # Notificar al DT
+        guild = bot.guilds[0] if bot.guilds else None
+        if guild and self.equipo["discord_id"]:
+            try:
+                dt = guild.get_member(int(self.equipo["discord_id"]))
+                if dt:
+                    await dt.send(embed=embed_error(f"**{self.nombre}** rechazó tu oferta de contrato."))
+            except: pass
 
 @tree.command(name="inscribir_jugador", description="Propone contrato a un jugador")
 @app_commands.describe(jugador="Usuario de Discord del jugador", posicion="Posición", dorsal="Número de camiseta", sueldo="Sueldo semanal en dólares")
@@ -213,7 +223,7 @@ async def liberar_jugador_cmd(interaction: discord.Interaction, nombre: str):
     # Quitar rol del equipo al jugador
     if equipo["rol_id"] and jugador["discord_id"]:
         try:
-            member = interaction.guild.get_member(int(jugador["discord_id"]))
+            member = interaction.guild.get_member(int(jugador["discord_id"])) if jugador["discord_id"] else None
             rol = interaction.guild.get_role(int(equipo["rol_id"]))
             if member and rol:
                 await member.remove_roles(rol)
@@ -241,7 +251,7 @@ async def fichar_cmd(interaction: discord.Interaction, nombre: str, dorsal: int)
     # Asignar rol del equipo y quitar agente libre
     if jugador["discord_id"]:
         try:
-            member = interaction.guild.get_member(int(jugador["discord_id"]))
+            member = interaction.guild.get_member(int(jugador["discord_id"])) if jugador["discord_id"] else None
             if member:
                 if equipo["rol_id"]:
                     rol_equipo = interaction.guild.get_role(int(equipo["rol_id"])) if equipo["rol_id"] else None
@@ -314,7 +324,7 @@ async def ofertar(interaction: discord.Interaction, equipo_rival: discord.Role, 
     oferta_id = await crear_oferta(jug["id"], equipo_comprador["id"], equipo_vendedor["id"], monto)
     emb = embed_ok("💸 Oferta enviada", f"**{equipo_comprador['nombre']}** ofrece **{fmt(monto)}** por **{jugador}** ({jug['posicion']})\nAl equipo: **{equipo_vendedor['nombre']}**\nID: `{oferta_id}`")
     await interaction.response.send_message(embed=emb)
-    dt_rival = interaction.guild.get_member(int(equipo_vendedor["discord_id"]))
+    dt_rival = interaction.guild.get_member(int(equipo_vendedor["discord_id"])) if equipo_vendedor["discord_id"] else None
     if dt_rival:
         try:
             notif = discord.Embed(title="📨 ¡Tienes una oferta!",
@@ -356,7 +366,7 @@ async def aceptar_oferta_cmd(interaction: discord.Interaction, id: int):
     # Cambiar rol del jugador
     if jug["discord_id"]:
         try:
-            member = interaction.guild.get_member(int(jug["discord_id"]))
+            member = interaction.guild.get_member(int(jug["discord_id"])) if jug["discord_id"] else None
             if member:
                 if eq_v["rol_id"]:
                     rol_v = interaction.guild.get_role(int(eq_v["rol_id"])) if eq_v["rol_id"] else None
@@ -375,24 +385,25 @@ async def aceptar_oferta_cmd(interaction: discord.Interaction, id: int):
         await interaction.response.send_message(embed=emb, file=file)
 
         # Publicar en canal #fichajes
-        canal_fichajes = discord.utils.get(interaction.guild.text_channels, name="fichajes")
-        if canal_fichajes:
-            from generar_imagen import generar_fichaje
-            buf2 = generar_fichaje(jug["nombre"], jug["posicion"], jug["dorsal"] or 0, eq_v["nombre"], eq_c["nombre"], oferta["monto"])
-            file2 = discord.File(buf2, filename="fichaje.png")
-            emb2 = embed_ok("⚽ ¡Fichaje oficial!", f"**{jug['nombre']}** ({jug['posicion']}) se une a **{eq_c['nombre']}**\n💰 Traspaso: **{fmt(oferta['monto'])}**")
-            emb2.set_image(url="attachment://fichaje.png")
-            await canal_fichajes.send(embed=emb2, file=file2)
+        if interaction.guild:
+            canal_fichajes = discord.utils.get(interaction.guild.text_channels, name="fichajes")
+            if canal_fichajes:
+                from generar_imagen import generar_fichaje as gf2
+                buf2 = gf2(jug["nombre"], jug["posicion"], jug["dorsal"] or 0, eq_v["nombre"], eq_c["nombre"], oferta["monto"])
+                file2 = discord.File(buf2, filename="fichaje.png")
+                emb2 = embed_ok("⚽ ¡Fichaje oficial!", f"**{jug['nombre']}** ({jug['posicion']}) se une a **{eq_c['nombre']}**\n💰 Traspaso: **{fmt(oferta['monto'])}**")
+                emb2.set_image(url="attachment://fichaje.png")
+                await canal_fichajes.send(embed=emb2, file=file2)
     except Exception as e:
         emb = embed_ok("✅ ¡Transferencia completada!", f"**{jug['nombre']}** → **{eq_c['nombre']}**\n💰 **{fmt(oferta['monto'])}**")
         await interaction.response.send_message(embed=emb)
-
         # Publicar en #fichajes sin imagen
-        canal_fichajes = discord.utils.get(interaction.guild.text_channels, name="fichajes")
-        if canal_fichajes:
-            emb2 = embed_ok("⚽ ¡Fichaje oficial!", f"**{jug['nombre']}** ({jug['posicion']}) se une a **{eq_c['nombre']}**\n💰 Traspaso: **{fmt(oferta['monto'])}**")
-            await canal_fichajes.send(embed=emb2)
-    dt_c = interaction.guild.get_member(int(eq_c["discord_id"]))
+        if interaction.guild:
+            canal_fichajes = discord.utils.get(interaction.guild.text_channels, name="fichajes")
+            if canal_fichajes:
+                emb2 = embed_ok("⚽ ¡Fichaje oficial!", f"**{jug['nombre']}** ({jug['posicion']}) se une a **{eq_c['nombre']}**\n💰 Traspaso: **{fmt(oferta['monto'])}**")
+                await canal_fichajes.send(embed=emb2)
+    dt_c = interaction.guild.get_member(int(eq_c["discord_id"])) if eq_c["discord_id"] else None
     if dt_c:
         try:
             await dt_c.send(embed=embed_ok("🎉 ¡Oferta aceptada!", f"**{eq_v['nombre']}** aceptó tu oferta.\n**{jug['nombre']}** ya es tuyo."))
@@ -411,7 +422,7 @@ async def rechazar_oferta_cmd(interaction: discord.Interaction, id: int):
     jug = await get_jugador_by_id(oferta["jugador_id"])
     eq_c = await get_equipo_by_id(oferta["equipo_comprador_id"])
     await interaction.response.send_message(embed=embed_error(f"Oferta de **{eq_c['nombre']}** por **{jug['nombre']}** rechazada."))
-    dt_c = interaction.guild.get_member(int(eq_c["discord_id"]))
+    dt_c = interaction.guild.get_member(int(eq_c["discord_id"])) if eq_c["discord_id"] else None
     if dt_c:
         try: await dt_c.send(embed=discord.Embed(title="❌ Oferta rechazada", description=f"**{equipo['nombre']}** rechazó tu oferta por **{jug['nombre']}**.", color=COLOR_ERROR))
         except: pass
