@@ -147,7 +147,7 @@ class ContratoView(discord.ui.View):
         await interaction.response.edit_message(embed=emb, view=self)
         # Publicar en #fichajes
         if guild:
-            canal_fichajes = discord.utils.get(guild.text_channels, name="fichajes")
+            canal_fichajes = discord.utils.get(guild.text_channels, name="✅・fichajes")
             if canal_fichajes:
                 emb_pub = embed_ok(
                     "📋 Nuevo jugador inscrito",
@@ -264,6 +264,14 @@ async def fichar_cmd(interaction: discord.Interaction, nombre: str, dorsal: int)
 
     emb = embed_ok("🤝 ¡Fichaje completado!", f"**{nombre}** ({jugador['posicion']}) llega a **{equipo['nombre']}** con el dorsal #{dorsal}.")
     await interaction.response.send_message(embed=emb)
+
+    # Publicar en canal fichajes
+    canal_fich = discord.utils.get(interaction.guild.text_channels, name="✅・fichajes")
+    if canal_fich:
+        pos = jugador["posicion"]
+        eq_nom = equipo["nombre"]
+        emb_f = embed_ok("✅ Nuevo fichaje", f"**{nombre}** ({pos}) · Dorsal #{dorsal}\nEquipo: **{eq_nom}**")
+        await canal_fich.send(embed=emb_f)
 
 @tree.command(name="mercado", description="Muestra los jugadores libres disponibles")
 async def mercado(interaction: discord.Interaction):
@@ -387,7 +395,7 @@ async def aceptar_oferta_cmd(interaction: discord.Interaction, id: int):
 
         # Publicar en canal #fichajes
         if interaction.guild:
-            canal_fichajes = discord.utils.get(interaction.guild.text_channels, name="fichajes")
+            canal_fichajes = discord.utils.get(interaction.guild.text_channels, name="✅・fichajes")
             if canal_fichajes:
                 from generar_imagen import generar_fichaje as gf2
                 buf2 = gf2(jug["nombre"], jug["posicion"], jug["dorsal"] or 0, eq_v["nombre"], eq_c["nombre"], oferta["monto"])
@@ -400,7 +408,7 @@ async def aceptar_oferta_cmd(interaction: discord.Interaction, id: int):
         await interaction.response.send_message(embed=emb)
         # Publicar en #fichajes sin imagen
         if interaction.guild:
-            canal_fichajes = discord.utils.get(interaction.guild.text_channels, name="fichajes")
+            canal_fichajes = discord.utils.get(interaction.guild.text_channels, name="✅・fichajes")
             if canal_fichajes:
                 emb2 = embed_ok("⚽ ¡Fichaje oficial!", f"**{jug['nombre']}** ({jug['posicion']}) se une a **{eq_c['nombre']}**\n💰 Traspaso: **{fmt(oferta['monto'])}**")
                 await canal_fichajes.send(embed=emb2)
@@ -668,10 +676,17 @@ class TicketSelect(discord.ui.Select):
         guild = interaction.guild
         user = interaction.user
 
+        await interaction.response.defer(ephemeral=True)
+        
+        # Nombre seguro para el canal (solo letras, números y guiones)
+        import re as _re
+        safe_name = _re.sub(r'[^a-z0-9]', '-', user.display_name.lower())[:20].strip('-') or f"user-{user.id}"
+        canal_name = f"ticket-{safe_name}"
+
         # Verificar si ya tiene un ticket abierto
-        canal_existente = discord.utils.get(guild.text_channels, name=f"ticket-{user.name.lower()[:20]}")
+        canal_existente = discord.utils.get(guild.text_channels, name=canal_name)
         if canal_existente:
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 f"Ya tienes un ticket abierto en {canal_existente.mention}.", ephemeral=True
             )
             return
@@ -691,13 +706,20 @@ class TicketSelect(discord.ui.Select):
         # Buscar o crear categoría Tickets
         categoria = discord.utils.get(guild.categories, name="TICKETS")
         if not categoria:
-            categoria = await guild.create_category("TICKETS")
+            try:
+                categoria = await guild.create_category("TICKETS")
+            except:
+                categoria = None
 
-        canal = await guild.create_text_channel(
-            name=f"ticket-{user.name[:20]}",
-            category=categoria,
-            overwrites=overwrites
-        )
+        try:
+            canal = await guild.create_text_channel(
+                name=canal_name,
+                category=categoria,
+                overwrites=overwrites
+            )
+        except Exception as e:
+            await interaction.followup.send(f"No pude crear el canal del ticket. Verifica los permisos del bot.", ephemeral=True)
+            return
 
         # Mensaje en el canal del ticket
         staff_mentions = []
@@ -726,7 +748,7 @@ class TicketSelect(discord.ui.Select):
         )
         await msg.pin()
 
-        await interaction.response.send_message(
+        await interaction.followup.send(
             f"✅ Tu ticket fue creado en {canal.mention}", ephemeral=True
         )
 
