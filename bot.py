@@ -267,19 +267,10 @@ async def fichar_cmd(interaction: discord.Interaction, nombre: str, dorsal: int)
 
 @tree.command(name="mercado", description="Muestra los jugadores libres disponibles")
 async def mercado(interaction: discord.Interaction):
-    # Jugadores registrados en BD sin equipo
-    libres_bd = await get_jugadores_libres()
-    # Miembros del servidor sin rol de ningún equipo
-    roles_equipos = await get_roles_equipos()
-    miembros_libres = []
-    for member in interaction.guild.members:
-        if member.bot: continue
-        tiene_equipo = any(str(r.id) in roles_equipos for r in member.roles)
-        if not tiene_equipo:
-            miembros_libres.append(member.display_name)
-
     emb = embed_info("🏪 Mercado libre")
 
+    # Jugadores registrados en BD sin equipo
+    libres_bd = await get_jugadores_libres()
     if libres_bd:
         por_pos = {}
         for j in libres_bd:
@@ -287,12 +278,22 @@ async def mercado(interaction: discord.Interaction):
         for pos, lista in por_pos.items():
             emb.add_field(name=f"Registrados — {pos}", value="\n".join(lista[:8]), inline=True)
 
-    if miembros_libres:
-        # Mostrar en grupos de 15
-        chunk = miembros_libres[:20]
-        emb.add_field(name=f"👥 Sin equipo ({len(miembros_libres)} miembros)", value="\n".join(f"• {n}" for n in chunk), inline=False)
-        if len(miembros_libres) > 20:
-            emb.set_footer(text=f"... y {len(miembros_libres)-20} más sin equipo")
+    # Solo miembros con rol "agente libre"
+    rol_libre = discord.utils.get(interaction.guild.roles, name="agente libre")
+    if rol_libre and rol_libre.members:
+        agentes = [m.display_name for m in rol_libre.members if not m.bot]
+        if agentes:
+            chunk = agentes[:25]
+            emb.add_field(
+                name=f"👥 Agentes libres ({len(agentes)})",
+                value="\n".join(f"• {n}" for n in chunk),
+                inline=False
+            )
+            if len(agentes) > 25:
+                emb.set_footer(text=f"... y {len(agentes)-25} más")
+
+    if not libres_bd and (not rol_libre or not rol_libre.members):
+        emb.description = "No hay jugadores disponibles."
 
     if not libres_bd and not miembros_libres:
         emb.description = "No hay jugadores disponibles."
