@@ -76,8 +76,8 @@ async def mi_equipo(interaction: discord.Interaction):
     if jugadores:
         por_pos = {}
         for j in jugadores:
-            s = fmt(j["sueldo"]) if j.get("sueldo") else "—"
-            v = fmt(j["valor"]) if j.get("valor") else "Libre"
+            s = fmt(j["sueldo"]) if j["sueldo"] else "—"
+            v = fmt(j["valor"]) if j["valor"] else "Libre"
             por_pos.setdefault(j["posicion"],[]).append(f"`{j['dorsal']}` **{j['nombre']}** · Sueldo: {s} · Valor: {v}")
         for pos, lista in por_pos.items():
             emb.add_field(name=pos, value="\n".join(lista), inline=False)
@@ -127,6 +127,16 @@ class ContratoView(discord.ui.View):
         if self.rol:
             try: await interaction.user.add_roles(self.rol)
             except: pass
+        # Quitar rol agente libre
+        try:
+            for guild in bot.guilds:
+                member = guild.get_member(interaction.user.id)
+                if member:
+                    rol_libre = discord.utils.get(guild.roles, name="agente libre")
+                    if rol_libre and rol_libre in member.roles:
+                        await member.remove_roles(rol_libre)
+                    break
+        except: pass
         emb = embed_ok("✅ ¡Contrato aceptado!", f"Bienvenido a **{self.equipo['nombre']}**, **{self.nombre}**!\nDorsal: #{self.dorsal} · {self.posicion}\n💰 Sueldo semanal: **{fmt(self.sueldo)}**")
         self.stop()
         for item in self.children: item.disabled = True
@@ -201,7 +211,7 @@ async def liberar_jugador_cmd(interaction: discord.Interaction, nombre: str):
         await interaction.response.send_message(embed=embed_error(f"No tienes ningún jugador llamado **{nombre}**."), ephemeral=True); return
     await liberar_jugador(jugador["id"])
     # Quitar rol del equipo al jugador
-    if equipo.get("rol_id") and jugador.get("discord_id"):
+    if equipo["rol_id"] and jugador["discord_id"]:
         try:
             member = interaction.guild.get_member(int(jugador["discord_id"]))
             rol = interaction.guild.get_role(int(equipo["rol_id"]))
@@ -227,6 +237,21 @@ async def fichar_cmd(interaction: discord.Interaction, nombre: str, dorsal: int)
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute("UPDATE jugadores SET dorsal=? WHERE id=?", (dorsal, jugador["id"]))
         await db.commit()
+
+    # Asignar rol del equipo y quitar agente libre
+    if jugador["discord_id"]:
+        try:
+            member = interaction.guild.get_member(int(jugador["discord_id"]))
+            if member:
+                if equipo["rol_id"]:
+                    rol_equipo = interaction.guild.get_role(int(equipo["rol_id"])) if equipo["rol_id"] else None
+                    if rol_equipo:
+                        await member.add_roles(rol_equipo)
+                rol_libre = discord.utils.get(interaction.guild.roles, name="agente libre")
+                if rol_libre and rol_libre in member.roles:
+                    await member.remove_roles(rol_libre)
+        except: pass
+
     emb = embed_ok("🤝 ¡Fichaje completado!", f"**{nombre}** ({jugador['posicion']}) llega a **{equipo['nombre']}** con el dorsal #{dorsal}.")
     await interaction.response.send_message(embed=emb)
 
@@ -329,15 +354,15 @@ async def aceptar_oferta_cmd(interaction: discord.Interaction, id: int):
     eq_c = await get_equipo_by_id(oferta["equipo_comprador_id"])
     eq_v = await get_equipo_by_id(oferta["equipo_vendedor_id"])
     # Cambiar rol del jugador
-    if jug.get("discord_id"):
+    if jug["discord_id"]:
         try:
             member = interaction.guild.get_member(int(jug["discord_id"]))
             if member:
-                if eq_v.get("rol_id"):
-                    rol_v = interaction.guild.get_role(int(eq_v["rol_id"]))
+                if eq_v["rol_id"]:
+                    rol_v = interaction.guild.get_role(int(eq_v["rol_id"])) if eq_v["rol_id"] else None
                     if rol_v: await member.remove_roles(rol_v)
-                if eq_c.get("rol_id"):
-                    rol_c = interaction.guild.get_role(int(eq_c["rol_id"]))
+                if eq_c["rol_id"]:
+                    rol_c = interaction.guild.get_role(int(eq_c["rol_id"])) if eq_c["rol_id"] else None
                     if rol_c: await member.add_roles(rol_c)
         except: pass
     # Generar imagen de fichaje
