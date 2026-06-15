@@ -292,7 +292,7 @@ async def mercado(interaction: discord.Interaction):
             if len(agentes) > 25:
                 emb.set_footer(text=f"... y {len(agentes)-25} más")
 
-    if not libres_bd and (not rol_libre or not rol_libre.members):
+    if not libres_bd and (not rol_libre or not [m for m in rol_libre.members if not m.bot]):
         emb.description = "No hay jugadores disponibles."
 
     if not libres_bd and not miembros_libres:
