@@ -295,7 +295,7 @@ async def mercado(interaction: discord.Interaction):
     if not libres_bd and (not rol_libre or not [m for m in rol_libre.members if not m.bot]):
         emb.description = "No hay jugadores disponibles."
 
-    if not libres_bd and not miembros_libres:
+    if not libres_bd and (not rol_libre or not [m for m in rol_libre.members if not m.bot]):
         emb.description = "No hay jugadores disponibles."
 
     await interaction.response.send_message(embed=emb)
