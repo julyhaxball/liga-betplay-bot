@@ -137,7 +137,7 @@ class ContratoView(discord.ui.View):
                     except: pass
                 # Quitar rol agente libre
                 try:
-                    rol_libre = discord.utils.get(guild.roles, name="agente libre")
+                    rol_libre = discord.utils.get(guild.roles, name="👤 | Agente Libre")
                     if rol_libre and rol_libre in member.roles:
                         await member.remove_roles(rol_libre)
                 except: pass
@@ -257,7 +257,7 @@ async def fichar_cmd(interaction: discord.Interaction, nombre: str, dorsal: int)
                     rol_equipo = interaction.guild.get_role(int(equipo["rol_id"])) if equipo["rol_id"] else None
                     if rol_equipo:
                         await member.add_roles(rol_equipo)
-                rol_libre = discord.utils.get(interaction.guild.roles, name="agente libre")
+                rol_libre = discord.utils.get(interaction.guild.roles, name="👤 | Agente Libre")
                 if rol_libre and rol_libre in member.roles:
                     await member.remove_roles(rol_libre)
         except: pass
@@ -279,7 +279,7 @@ async def mercado(interaction: discord.Interaction):
             emb.add_field(name=f"Registrados — {pos}", value="\n".join(lista[:8]), inline=True)
 
     # Solo miembros con rol "agente libre"
-    rol_libre = discord.utils.get(interaction.guild.roles, name="agente libre")
+    rol_libre = discord.utils.get(interaction.guild.roles, name="👤 | Agente Libre")
     if rol_libre and rol_libre.members:
         agentes = [m.display_name for m in rol_libre.members if not m.bot]
         if agentes:
