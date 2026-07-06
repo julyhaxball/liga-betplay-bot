@@ -809,26 +809,37 @@ class PostulacionesView(discord.ui.View):
 
 
 async def scheduler_postulaciones():
-    """Manda recordatorio de postulaciones cada hora."""
+    """Manda recordatorio de postulaciones cada hora entre 8am y 10pm hora Colombia."""
     await bot.wait_until_ready()
-    await asyncio.sleep(10)
+    await asyncio.sleep(30)
     while not bot.is_closed():
         try:
-            canal = bot.get_channel(1523476975958884513)
-            if canal:
-                msg = (
-                    "@everyone\n\n"
-                    "**POSTULACIONES ABIERTAS** — RECORDATORIO DE QUE LAS POSTULACIONES TODAVÍA SIGUEN ABIERTAS, Y ESTAMOS BUSCANDO LOS ROLES:\n\n"
-                    "<@&1412626295824715877> ✏ | Diseñador\n"
-                    "<@&1519052105854222456> 🎶 | Moderador en Pruebas\n"
-                    "<@&1519052103127928914> 🍉 | Administrador en Pruebas\n"
-                    "<@&1520977865800421416> 🎤 | Narrador en Pruebas\n"
-                    "<@&1519065786646528180> 👮‍♂️ | Arbitro en Pruebas\n"
-                    "<@&1412626535558676521> 👨‍💻 | Programador\n"
-                    "<@&1519052109377437766> 📰 | Periodista en Pruebas\n\n"
-                    "EL QUE DESEE POSTULARSE A ESOS ROLES **ABRIR TICKET**"
-                )
-                await canal.send(msg)
+            ahora_utc = datetime.datetime.now(datetime.timezone.utc)
+            hora_colombia = (ahora_utc.hour - 5) % 24
+            if 8 <= hora_colombia < 22:
+                canal = bot.get_channel(1523476975958884513)
+                if canal:
+                    guild_id = bot.guilds[0].id if bot.guilds else 0
+                    msg = (
+                        "@everyone\n\n"
+                        "**📢 POSTULACIONES ABIERTAS**\n"
+                        "RECORDATORIO: LAS POSTULACIONES SIGUEN ABIERTAS. ESTAMOS BUSCANDO:\n\n"
+                        "<@&1412626295824715877> — Crea el contenido gráfico e identidad visual de la liga.\n"
+                        "<@&1519052105854222456> — Mantiene el orden del servidor durante su período de prueba.\n"
+                        "<@&1519052103127928914> — Apoya la gestión de la liga mientras está en evaluación.\n"
+                        "<@&1520977865800421416> — Narra los partidos y demuestra sus habilidades.\n"
+                        "<@&1519065786646528180> — Dirige los partidos aplicando el reglamento.\n"
+                        "<@&1412626535558676521> — Desarrolla y mantiene los sistemas de la liga.\n"
+                        "<@&1519052109377437766> — Informa sobre la actualidad y los eventos de la liga.\n\n"
+                        "👉 EL QUE DESEE POSTULARSE **ABRIR TICKET**"
+                    )
+                    view = discord.ui.View()
+                    view.add_item(discord.ui.Button(
+                        label="🎫 Ir al canal de tickets",
+                        style=discord.ButtonStyle.link,
+                        url=f"https://discord.com/channels/{guild_id}/1489705911969779912"
+                    ))
+                    await canal.send(msg, view=view)
         except Exception as e:
             print(f"Error scheduler postulaciones: {e}")
         await asyncio.sleep(3600)
