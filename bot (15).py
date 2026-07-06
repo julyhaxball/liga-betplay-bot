@@ -797,32 +797,6 @@ async def setup_tickets(interaction: discord.Interaction):
     await interaction.channel.send(embed=emb, view=TicketView())
     await interaction.response.send_message("✅ Panel de tickets enviado.", ephemeral=True)
 
-async def scheduler_postulaciones():
-    """Manda recordatorio de postulaciones cada hora."""
-    await bot.wait_until_ready()
-    await asyncio.sleep(10)
-    while not bot.is_closed():
-        try:
-            canal = bot.get_channel(1523476975958884513)
-            if canal:
-                msg = (
-                    ""
-                    "**POSTULACIONES ABIERTAS** — RECORDATORIO DE QUE LAS POSTULACIONES TODAVÍA SIGUEN ABIERTAS, Y ESTAMOS BUSCANDO LOS ROLES:\n\n"
-                    "<@&1412626295824715877> ✏ | Diseñador\n"
-                    "<@&1519052105854222456> 🎶 | Moderador en Pruebas\n"
-                    "<@&1519052103127928914> 🍉 | Administrador en Pruebas\n"
-                    "<@&1520977865800421416> 🎤 | Narrador en Pruebas\n"
-                    "<@&1519065786646528180> 👮‍♂️ | Arbitro en Pruebas\n"
-                    "<@&1412626535558676521> 👨‍💻 | Programador\n"
-                    "<@&1519052109377437766> 📰 | Periodista en Pruebas\n\n"
-                    "EL QUE DESEE POSTULARSE A ESOS ROLES **ABRIR TICKET**"
-                )
-                await canal.send(msg)
-        except Exception as e:
-            print(f"Error scheduler postulaciones: {e}")
-        await asyncio.sleep(3600)
-
-
 @bot.event
 async def on_ready():
     await init_db()
@@ -831,7 +805,6 @@ async def on_ready():
     await bot.change_presence(activity=discord.Game(name="⚽ Liga activa | /ayuda"))
     asyncio.ensure_future(scheduler_sueldos())
     asyncio.ensure_future(scheduler_presupuesto_mensual())
-    asyncio.ensure_future(scheduler_postulaciones())
 
 @bot.event
 async def on_command_error(ctx, error):
