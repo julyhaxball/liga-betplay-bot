@@ -797,6 +797,17 @@ async def setup_tickets(interaction: discord.Interaction):
     await interaction.channel.send(embed=emb, view=TicketView())
     await interaction.response.send_message("✅ Panel de tickets enviado.", ephemeral=True)
 
+
+class PostulacionesView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+        self.add_item(discord.ui.Button(
+            label="🎫 Abrir Ticket",
+            style=discord.ButtonStyle.primary,
+            url=f"https://discord.com/channels/{bot.guilds[0].id if bot.guilds else 0}/1489705911969779912"
+        ))
+
+
 async def scheduler_postulaciones():
     """Manda recordatorio de postulaciones cada hora."""
     await bot.wait_until_ready()
