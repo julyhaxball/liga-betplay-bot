@@ -832,7 +832,6 @@ async def on_ready():
     asyncio.ensure_future(scheduler_sueldos())
     asyncio.ensure_future(scheduler_presupuesto_mensual())
     asyncio.ensure_future(scheduler_postulaciones())
-    asyncio.ensure_future(scheduler_postulaciones())
 
 @bot.event
 async def on_command_error(ctx, error):
