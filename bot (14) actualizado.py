@@ -628,7 +628,7 @@ async def scheduler_sueldos():
                     await incrementar_pago(j["id"])
         except Exception as e:
             print(f"Error scheduler sueldos: {e}")
-        await asyncio.sleep(3600)
+        await asyncio.sleep(300)
 
 async def scheduler_presupuesto_mensual():
     await bot.wait_until_ready()
@@ -803,10 +803,10 @@ async def scheduler_postulaciones():
     await asyncio.sleep(10)
     while not bot.is_closed():
         try:
-            canal = bot.get_channel(1412630215569571850)
+            canal = bot.get_channel(1523476975958884513)
             if canal:
                 msg = (
-                    "@everyone\n\n"
+                    ""
                     "**POSTULACIONES ABIERTAS** — RECORDATORIO DE QUE LAS POSTULACIONES TODAVÍA SIGUEN ABIERTAS, Y ESTAMOS BUSCANDO LOS ROLES:\n\n"
                     "<@&1412626295824715877> ✏ | Diseñador\n"
                     "<@&1519052105854222456> 🎶 | Moderador en Pruebas\n"
@@ -831,7 +831,6 @@ async def on_ready():
     await bot.change_presence(activity=discord.Game(name="⚽ Liga activa | /ayuda"))
     asyncio.ensure_future(scheduler_sueldos())
     asyncio.ensure_future(scheduler_presupuesto_mensual())
-    asyncio.ensure_future(scheduler_postulaciones())
     asyncio.ensure_future(scheduler_postulaciones())
 
 @bot.event
