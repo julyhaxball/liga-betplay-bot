@@ -845,6 +845,115 @@ async def scheduler_postulaciones():
         await asyncio.sleep(3600)
 
 
+
+# ══════════════════════════════════════════════════════════════
+#  SISTEMA DE PREMIOS
+# ══════════════════════════════════════════════════════════════
+
+PREMIOS_CANALES = {
+    "🌐・golden-boot": "🌐 Golden Boot",
+    "👟・playmaker-award": "👟 Playmaker Award",
+    "⭐・x5": "⭐ x5",
+    "👑・winner-team": "👑 Winner Team",
+    "🎯・puskas": "🎯 Puskas",
+}
+
+class PremiosSelect(discord.ui.Select):
+    def __init__(self, clips: dict):
+        self.clips = clips
+        options = []
+        for canal_nombre, premio_nombre in PREMIOS_CANALES.items():
+            tiene_clip = canal_nombre in clips
+            options.append(discord.SelectOption(
+                label=premio_nombre,
+                value=canal_nombre,
+                description="Ver clip ganador" if tiene_clip else "Sin clip registrado aún",
+                emoji="🏆" if tiene_clip else "❌"
+            ))
+        super().__init__(placeholder="Selecciona una categoría...", options=options, min_values=1, max_values=1)
+
+    async def callback(self, interaction: discord.Interaction):
+        canal_nombre = self.values[0]
+        premio_nombre = PREMIOS_CANALES.get(canal_nombre, canal_nombre)
+        if canal_nombre not in self.clips:
+            await interaction.response.send_message(
+                embed=embed_error(f"No hay clip registrado para **{premio_nombre}** todavía."),
+                ephemeral=True
+            )
+            return
+        clip = self.clips[canal_nombre]
+        emb = discord.Embed(
+            title=f"🏆 {premio_nombre}",
+            description=clip["contenido"],
+            color=COLOR_AMARILLO
+        )
+        if clip.get("attachment"):
+            emb.set_image(url=clip["attachment"])
+        await interaction.response.send_message(embed=emb)
+
+
+class PremiosView(discord.ui.View):
+    def __init__(self, clips: dict):
+        super().__init__(timeout=60)
+        self.add_item(PremiosSelect(clips))
+
+
+@bot.event
+async def on_message(message):
+    if message.author.bot:
+        return
+    # Registrar clips en canales de premios
+    if message.channel.name in PREMIOS_CANALES:
+        # Solo admins pueden registrar clips
+        es_admin_msg = message.author.guild_permissions.administrator or any(r.name == ADMIN_ROL for r in message.author.roles)
+        if not es_admin_msg:
+            return
+        # Guardar en BD
+        contenido = message.content or ""
+        attachment = message.attachments[0].url if message.attachments else None
+        if contenido or attachment:
+            async with aiosqlite.connect(DB_PATH) as db:
+                try:
+                    await db.execute("CREATE TABLE IF NOT EXISTS premios (canal TEXT PRIMARY KEY, contenido TEXT, attachment TEXT)")
+                    await db.commit()
+                except:
+                    pass
+                await db.execute(
+                    "INSERT OR REPLACE INTO premios (canal, contenido, attachment) VALUES (?, ?, ?)",
+                    (message.channel.name, contenido, attachment)
+                )
+                await db.commit()
+            await message.add_reaction("✅")
+    await bot.process_commands(message)
+
+
+@tree.command(name="premios", description="Ver los clips ganadores de cada categoría de premios")
+async def premios(interaction: discord.Interaction):
+    # Cargar clips de la BD
+    clips = {}
+    async with aiosqlite.connect(DB_PATH) as db:
+        try:
+            await db.execute("CREATE TABLE IF NOT EXISTS premios (canal TEXT PRIMARY KEY, contenido TEXT, attachment TEXT)")
+            await db.commit()
+        except:
+            pass
+        db.row_factory = aiosqlite.Row
+        async with db.execute("SELECT * FROM premios") as cur:
+            rows = await cur.fetchall()
+            for row in rows:
+                clips[row["canal"]] = {"contenido": row["contenido"], "attachment": row["attachment"]}
+
+    emb = embed_info(
+        "🏆 Premios de la liga",
+        "Selecciona una categoría para ver el clip ganador."
+    )
+    for canal_nombre, premio_nombre in PREMIOS_CANALES.items():
+        estado = "✅ Clip disponible" if canal_nombre in clips else "❌ Sin clip"
+        emb.add_field(name=premio_nombre, value=estado, inline=True)
+
+    view = PremiosView(clips)
+    await interaction.response.send_message(embed=emb, view=view)
+
 @bot.event
 async def on_ready():
     await init_db()
