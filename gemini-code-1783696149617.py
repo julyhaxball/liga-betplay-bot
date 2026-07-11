@@ -32,6 +32,7 @@ COLOR_AMARILLO = 0xEF9F27
 intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
+intents.presences = True  # <--- Añade esta línea exacta aquí
 bot = commands.Bot(command_prefix="!", intents=intents)
 tree = bot.tree
 
@@ -541,7 +542,7 @@ async def quitar_sub_dt_cmd(interaction: discord.Interaction, usuario: discord.M
         await interaction.response.send_message(embed=embed_error("Solo el DT principal puede quitar sub DTs."), ephemeral=True); return
     await quitar_sub_dt(equipo["id"], str(usuario.id))
     emb = embed_ok("👥 Sub DT eliminado", f"**{usuario.display_name}** ya no es sub DT de **{equipo['nombre']}**.")
-    await interaction.response.send_message(emb)
+    await interaction.response.send_message(embed=emb)
 
 # ══════════════════════════════════════════════════════════════
 #  LIGA
