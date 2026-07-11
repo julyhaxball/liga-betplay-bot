@@ -1,11 +1,10 @@
-import discord
-from discord import app_commands
-from discord.ext import commands, tasks
 import os
-import asyncio
-import datetime
-import aiosqlite
 import io
+import discord
+from discord.ext import commands
+from discord import app_commands
+import aiosqlite
+import asyncio
 import re as _re
 
 # Importaciones del módulo local database.py
@@ -32,7 +31,7 @@ COLOR_AMARILLO = 0xEF9F27
 intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
-intents.presences = True  # <--- Añade esta línea exacta aquí
+intents.presences = True  
 bot = commands.Bot(command_prefix="!", intents=intents)
 tree = bot.tree
 
@@ -375,192 +374,28 @@ async def mercado(interaction: discord.Interaction):
             emb.add_field(name=f"Registrados — {pos}", value="\n".join(lista[:8]), inline=True)
 
     rol_libre = discord.utils.get(interaction.guild.roles, name="👤 | Agente Libre")
-    if rol_libre and rol_libre.members:
-        agentes = [m.display_name for m in rol_libre.members if not m.bot]
-        if agentes:
-            chunk = agentes[:25]
-            emb.add_field(name=f"👥 Agentes libres ({len(agentes)})", value="\n".join(f"• {n}" for n in chunk), inline=False)
-            if len(agentes) > 25:
-                emb.set_footer(text=f"... y {len(agentes)-25} más")
-
-    if not libres_bd and (not rol_libre or not [m for m in rol_libre.members if not m.bot]):
-        emb.description = "No hay jugadores disponibles."
-
     await interaction.response.send_message(embed=emb)
 
 # ══════════════════════════════════════════════════════════════
-#  FICHAJES CON DINERO
+#  ARRANQUE SEGURO CON REGISTRO DE ERRORES (AL FINAL DEL ARCHIVO)
 # ══════════════════════════════════════════════════════════════
 
-@tree.command(name="ofertar", description="Haz una oferta económica por un jugador rival")
-@app_commands.describe(equipo_rival="Rol del equipo rival", jugador="Nombre del jugador", monto="Cantidad en dólares")
-async def ofertar(interaction: discord.Interaction, equipo_rival: discord.Role, jugador: str, monto: int):
-    equipo_comprador, _ = await get_equipo_dt_o_sub(str(interaction.user.id))
-    if not equipo_comprador:
-        await interaction.response.send_message(embed=embed_error("No tienes equipo."), ephemeral=True); return
-    if monto <= 0:
-        await interaction.response.send_message(embed=embed_error("El monto debe ser mayor a $0."), ephemeral=True); return
-    if equipo_comprador["presupuesto"] < monto:
-        await interaction.response.send_message(embed=embed_error(f"No tienes suficiente presupuesto.\nDisponible: **{fmt(equipo_comprador['presupuesto'])}**"), ephemeral=True); return
-    equipo_vendedor = await get_equipo_by_rol(str(equipo_rival.id))
-    if not equipo_vendedor:
-        await interaction.response.send_message(embed=embed_error(f"**{equipo_rival.name}** no está en la liga."), ephemeral=True); return
-    if equipo_comprador["id"] == equipo_vendedor["id"]:
-        await interaction.response.send_message(embed=embed_error("No puedes hacerte una oferta a ti mismo."), ephemeral=True); return
-    jug = await get_jugador_by_nombre(jugador)
-    if not jug or jug["equipo_id"] != equipo_vendedor["id"]:
-        await interaction.response.send_message(embed=embed_error(f"**{equipo_rival.name}** no tiene a **{jugador}**."), ephemeral=True); return
-    oferta_id = await crear_oferta(jug["id"], equipo_comprador["id"], equipo_vendedor["id"], monto)
-    emb = embed_ok("💸 Oferta enviada", f"**{equipo_comprador['nombre']}** ofrece **{fmt(monto)}** por **{jugador}** ({jug['posicion']})\nAl equipo: **{equipo_vendedor['nombre']}**\nID: `{oferta_id}`")
-    await interaction.response.send_message(embed=emb)
-    dt_rival = interaction.guild.get_member(int(equipo_vendedor["discord_id"])) if equipo_vendedor["discord_id"] else None
-    if dt_rival:
-        try:
-            notif = discord.Embed(title="📨 ¡Tienes una oferta!", description=f"**{equipo_comprador['nombre']}** ofrece **{fmt(monto)}** por **{jugador}** ({jug['posicion']})\n\nUsa `/mis_ofertas` para verla.", color=COLOR_AMARILLO)
-            await dt_rival.send(embed=notif)
-        except Exception: pass
-
-@tree.command(name="mis_ofertas", description="Ver las ofertas pendientes para tu equipo")
-async def mis_ofertas(interaction: discord.Interaction):
-    equipo = await get_equipo_by_discord(str(interaction.user.id))
-    if not equipo:
-        await interaction.response.send_message(embed=embed_error("No tienes equipo."), ephemeral=True); return
-    ofertas = await get_ofertas_pendientes(equipo["id"])
-    if not ofertas:
-        await interaction.response.send_message(embed=embed_info("📨 Ofertas pendientes", "No tienes ofertas pendientes."), ephemeral=True); return
-    emb = embed_info("📨 Ofertas pendientes", f"Tienes **{len(ofertas)}** oferta(s):")
-    for o in ofertas:
-        jug = await get_jugador_by_id(o["jugador_id"])
-        eq = await get_equipo_by_id(o["equipo_comprador_id"])
-        emb.add_field(name=f"Oferta ID: {o['id']}", value=f"**{eq['nombre']}** ofrece **{fmt(o['monto'])}** por **{jug['nombre']}** ({jug['posicion']})\n✅ `/aceptar_oferta id:{o['id']}` · ❌ `/rechazar_oferta id:{o['id']}`", inline=False)
-    await interaction.response.send_message(embed=emb, ephemeral=True)
-
-@tree.command(name="aceptar_oferta", description="Acepta una oferta de fichaje")
-@app_commands.describe(id="ID de la oferta")
-async def aceptar_oferta_cmd(interaction: discord.Interaction, id: int):
-    equipo = await get_equipo_by_discord(str(interaction.user.id))
-    if not equipo:
-        await interaction.response.send_message(embed=embed_error("No tienes equipo."), ephemeral=True); return
-    oferta = await get_oferta(id)
-    if not oferta or oferta["equipo_vendedor_id"] != equipo["id"] or oferta["estado"] != "pendiente":
-        await interaction.response.send_message(embed=embed_error("Oferta no válida o ya respondida."), ephemeral=True); return
-    await aceptar_oferta(id)
-    jug = await get_jugador_by_id(oferta["jugador_id"])
-    eq_c = await get_equipo_by_id(oferta["equipo_comprador_id"])
-    eq_v = await get_equipo_by_id(oferta["equipo_vendedor_id"])
-    
-    if jug["discord_id"]:
-        try:
-            member = interaction.guild.get_member(int(jug["discord_id"])) if jug["discord_id"] else None
-            if member:
-                if eq_v["rol_id"]:
-                    rol_v = interaction.guild.get_role(int(eq_v["rol_id"])) if eq_v["rol_id"] else None
-                    if rol_v: await member.remove_roles(rol_v)
-                if eq_c["rol_id"]:
-                    rol_c = interaction.guild.get_role(int(eq_c["rol_id"])) if eq_c["rol_id"] else None
-                    if rol_c: await member.add_roles(rol_c)
-        except Exception: pass
-        
+async def main():
     try:
-        from generar_imagen import generar_fichaje
-        buf = generar_fichaje(jug["nombre"], jug["posicion"], jug["dorsal"] or 0, eq_v["nombre"], eq_c["nombre"], oferta["monto"])
-        file = discord.File(buf, filename="fichaje.png")
-        emb = embed_ok("✅ ¡Transferencia completada!", f"**{jug['nombre']}** → **{eq_c['nombre']}**\n💰 **{fmt(oferta['monto'])}**")
-        emb.set_image(url="attachment://fichaje.png")
-        await interaction.response.send_message(embed=emb, file=file)
-
-        if interaction.guild:
-            canal_fichajes = discord.utils.get(interaction.guild.text_channels, name="✅・fichajes")
-            if canal_fichajes:
-                from generar_imagen import generar_fichaje as gf2
-                buf2 = gf2(jug["nombre"], jug["posicion"], jug["dorsal"] or 0, eq_v["nombre"], eq_c["nombre"], oferta["monto"])
-                file2 = discord.File(buf2, filename="fichaje.png")
-                emb2 = embed_ok("⚽ ¡Fichaje oficial!", f"**{jug['nombre']}** ({jug['posicion']}) se une a **{eq_c['nombre']}**\n💰 Traspaso: **{fmt(oferta['monto'])}**")
-                emb2.set_image(url="attachment://fichaje.png")
-                await canal_fichajes.send(embed=emb2, file=file2)
-    except Exception:
-        emb = embed_ok("✅ ¡Transferencia completada!", f"**{jug['nombre']}** → **{eq_c['nombre']}**\n💰 **{fmt(oferta['monto'])}**")
-        await interaction.response.send_message(embed=emb)
-        if interaction.guild:
-            canal_fichajes = discord.utils.get(interaction.guild.text_channels, name="✅・fichajes")
-            if canal_fichajes:
-                emb2 = embed_ok("⚽ ¡Fichaje oficial!", f"**{jug['nombre']}** ({jug['posicion']}) se une a **{eq_c['nombre']}**\n💰 Traspaso: **{fmt(oferta['monto'])}**")
-                await canal_fichajes.send(embed=emb2)
-                
-    dt_c = interaction.guild.get_member(int(eq_c["discord_id"])) if eq_c["discord_id"] else None
-    if dt_c:
-        try: await dt_c.send(embed=embed_ok("🎉 ¡Oferta aceptada!", f"**{eq_v['nombre']}** aceptó tu oferta.\n**{jug['nombre']}** ya es tuyo."))
-        except Exception: pass
-
-@tree.command(name="rechazar_oferta", description="Rechaza una oferta de fichaje")
-@app_commands.describe(id="ID de la oferta")
-async def rechazar_oferta_cmd(interaction: discord.Interaction, id: int):
-    equipo = await get_equipo_by_discord(str(interaction.user.id))
-    if not equipo:
-        await interaction.response.send_message(embed=embed_error("No tienes equipo."), ephemeral=True); return
-    oferta = await get_oferta(id)
-    if not oferta or oferta["equipo_vendedor_id"] != equipo["id"] or oferta["estado"] != "pendiente":
-        await interaction.response.send_message(embed=embed_error("Oferta no válida o ya respondida."), ephemeral=True); return
-    await rechazar_oferta(id)
-    jug = await get_jugador_by_id(oferta["jugador_id"])
-    eq_c = await get_equipo_by_id(oferta["equipo_comprador_id"])
-    await interaction.response.send_message(embed=embed_error(f"Oferta de **{eq_c['nombre']}** por **{jug['nombre']}** rechazada."))
-    dt_c = interaction.guild.get_member(int(eq_c["discord_id"])) if eq_c["discord_id"] else None
-    if dt_c:
-        try: await dt_c.send(embed=discord.Embed(title="❌ Oferta rechazada", description=f"**{equipo['nombre']}** rechazó tu oferta por **{jug['nombre']}**.", color=COLOR_ERROR))
-        except Exception: pass
-
-# ══════════════════════════════════════════════════════════════
-#  SUB DTS
-# ══════════════════════════════════════════════════════════════
-
-@tree.command(name="agregar_sub_dt", description="Agrega un sub DT a tu equipo")
-@app_commands.describe(usuario="Usuario que será sub DT")
-async def agregar_sub_dt_cmd(interaction: discord.Interaction, usuario: discord.Member):
-    equipo = await get_equipo_by_discord(str(interaction.user.id))
-    if not equipo:
-        await interaction.response.send_message(embed=embed_error("Solo el DT principal puede agregar sub DTs."), ephemeral=True); return
-    if usuario.id == interaction.user.id:
-        await interaction.response.send_message(embed=embed_error("No puedes agregarte a ti mismo."), ephemeral=True); return
-    otro = await get_equipo_by_discord(str(usuario.id))
-    if otro:
-        await interaction.response.send_message(embed=embed_error(f"**{usuario.display_name}** ya es DT de **{otro['nombre']}**."), ephemeral=True); return
-    subs = await get_sub_dts(equipo["id"])
-    if len(subs) >= 2:
-        await interaction.response.send_message(embed=embed_error("Ya tienes 2 sub DTs, ese es el máximo."), ephemeral=True); return
-    ok = await agregar_sub_dt(equipo["id"], str(usuario.id))
-    if not ok:
-        await interaction.response.send_message(embed=embed_error(f"**{usuario.display_name}** ya es sub DT."), ephemeral=True); return
-    emb = embed_ok("👥 Sub DT agregado", f"**{usuario.display_name}** ahora es sub DT de **{equipo['nombre']}**.\nPuede fichar, inscribir y liberar jugadores.")
-    await interaction.response.send_message(embed=emb)
-
-@tree.command(name="quitar_sub_dt", description="Quita un sub DT de tu equipo")
-@app_commands.describe(usuario="Sub DT a quitar")
-async def quitar_sub_dt_cmd(interaction: discord.Interaction, usuario: discord.Member):
-    equipo = await get_equipo_by_discord(str(interaction.user.id))
-    if not equipo:
-        await interaction.response.send_message(embed=embed_error("Solo el DT principal puede quitar sub DTs."), ephemeral=True); return
-    await quitar_sub_dt(equipo["id"], str(usuario.id))
-    emb = embed_ok("👥 Sub DT eliminado", f"**{usuario.display_name}** ya no es sub DT de **{equipo['nombre']}**.")
-    await interaction.response.send_message(embed=emb)
-
-# ══════════════════════════════════════════════════════════════
-#  LIGA
-# ══════════════════════════════════════════════════════════════
-
-@tree.command(name="tabla", description="Tabla de posiciones")
-async def tabla(interaction: discord.Interaction):
-    equipos = await get_todos_equipos()
-    if not equipos:
-        await interaction.response.send_message(embed=embed_info("📊 Tabla", "No hay equipos registrados.")); return
-    emb = embed_info("📊 Tabla de posiciones")
-
-# Ordenar equipos por puntos, luego por diferencia de goles
-    equipos.sort(key=lambda x: (x.get('puntos', 0), x.get('dg', 0)), reverse=True)
-    
-    descripcion = ""
-    for i, eq in enumerate(equipos, 1):
-        descripcion += f"**{i}. {eq['nombre']}** - {eq.get('puntos', 0)} pts (PJ: {eq.get('pj', 0)} | DG: {eq.get('dg', 0)})\n"
+        # Inicializa la base de datos antes de conectar el bot
+        await init_db()
+        print("✅ Base de datos inicializada correctamente.")
         
-    emb.description = descripcion
-    await interaction.response.send_message(embed=emb)
+        # Intenta conectar el bot a Discord
+        await bot.start(TOKEN)
+    except Exception as e:
+        import traceback
+        error_completo = traceback.format_exc()
+        print(f"❌ ERROR CRÍTICO AL INICIAR:\n{error_completo}")
+        
+        # Guarda el error en un archivo para que lo puedas leer en GitHub/Render
+        with open("error_bot.txt", "w", encoding="utf-8") as f:
+            f.write(error_completo)
+
+if __name__ == "__main__":
+    asyncio.run(main())
