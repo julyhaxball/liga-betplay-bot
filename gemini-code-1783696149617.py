@@ -58,19 +58,41 @@ async def get_equipo_dt_o_sub(discord_id):
     return None, False
 
 # ══════════════════════════════════════════════════════════════
-#  SISTEMA DE PREMIOS Y CLIPS RECIENTES
+#  SISTEMA DE CARPETAS Y PREMIOS (ACTUALIZADO)
 # ══════════════════════════════════════════════════════════════
 
-CANALES_PREMIOS = {
-    "golden_boot": 1503892522634842283,
-    "playmaker": 1518398329187209246,
-    "x5": 1503893154053488700,
-    "winner_team": 1503893743747469362,
-    "puskas": 1516557926267879444
+# Mapeo de carpetas con sus respectivos IDs de canales para cada premio
+CARPETAS_PREMIOS = {
+    "first_season": {
+        "nombre_carpeta": "🌱 First Season",
+        "golden_boot": 1503892522634842283,
+        "playmaker": 1518398329187209246,
+        "x5": 1503893154053488700,
+        "winner_team": 1503893743747469362,
+        "puskas": 1516557926267879444
+    },
+    "second_season": {
+        "nombre_carpeta": "🔥 Second Season",
+        "golden_boot": 1503892522634842283,  # Reemplazar con IDs reales si cambian por temporada
+        "playmaker": 1518398329187209246,
+        "x5": 1503893154053488700,
+        "winner_team": 1503893743747469362,
+        "puskas": 1516557926267879444
+    },
+    "playoffs": {
+        "nombre_carpeta": "🏆 Playoffs",
+        "golden_boot": 1503892522634842283,  # Reemplazar con IDs reales si cambian para Playoffs
+        "playmaker": 1518398329187209246,
+        "x5": 1503893154053488700,
+        "winner_team": 1503893743747469362,
+        "puskas": 1516557926267879444
+    }
 }
 
+# 1. Menú Desplegable de Premios (Se activa DESPUÉS de elegir carpeta)
 class PremiosSelect(discord.ui.Select):
-    def __init__(self):
+    def __init__(self, carpeta_id):
+        self.carpeta_id = carpeta_id
         options = [
             discord.SelectOption(label="⚽ Golden Boot", value="golden_boot", description="Ver los goles del máximo artillero"),
             discord.SelectOption(label="👟 Playmaker Award", value="playmaker", description="Ver las mejores asistencias de la liga"),
@@ -79,7 +101,7 @@ class PremiosSelect(discord.ui.Select):
             discord.SelectOption(label="🎯 Premio Puskas", value="puskas", description="Ver las obras de arte nominadas al mejor gol")
         ]
         super().__init__(
-            placeholder="Elige una categoría de premio para ver clips...",
+            placeholder="Elige una categoría de premio...",
             min_values=1,
             max_values=1,
             options=options,
@@ -89,7 +111,10 @@ class PremiosSelect(discord.ui.Select):
     async def callback(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
         categoria = self.values[0]
-        canal_id = CANALES_PREMIOS.get(categoria)
+        
+        # Obtener los canales de la carpeta seleccionada anteriormente
+        canales = CARPETAS_PREMIOS.get(self.carpeta_id)
+        canal_id = canales.get(categoria) if canales else None
         
         canal = interaction.guild.get_channel(canal_id)
         if not canal:
@@ -116,7 +141,8 @@ class PremiosSelect(discord.ui.Select):
             except Exception:
                 pass
 
-        contenido = f"🎬 **Último aporte destacado en** {canal.mention} (por {ultimo_clip.author.mention}):\n"
+        nombre_carpeta = canales["nombre_carpeta"]
+        contenido = f"🎬 **Último aporte destacado en** {canal.mention} (`{nombre_carpeta}`) (por {ultimo_clip.author.mention}):\n"
         if ultimo_clip.content:
             contenido += f"\n{ultimo_clip.content}"
 
@@ -125,18 +151,50 @@ class PremiosSelect(discord.ui.Select):
         else:
             await interaction.followup.send(content=contenido, ephemeral=True)
 
-class PremiosView(discord.ui.View):
+# 2. Menú Desplegable Inicial para seleccionar la "Carpeta"
+class CarpetasSelect(discord.ui.Select):
+    def __init__(self):
+        options = [
+            discord.SelectOption(label="🌱 First Season", value="first_season", description="Clips de la Primera Temporada"),
+            discord.SelectOption(label="🔥 Second Season", value="second_season", description="Clips de la Segunda Temporada"),
+            discord.SelectOption(label="🏆 Playoffs", value="playoffs", description="Clips de las fases eliminatorias")
+        ]
+        super().__init__(
+            placeholder="📁 Selecciona una carpeta / temporada...",
+            min_values=1,
+            max_values=1,
+            options=options,
+            custom_id="carpetas_select"
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        carpeta_seleccionada = self.values[0]
+        nombre_carpeta = CARPETAS_PREMIOS[carpeta_seleccionada]["nombre_carpeta"]
+        
+        # Creamos una nueva vista que contenga el menú de premios filtrado por esta carpeta
+        view_premios = discord.ui.View(timeout=None)
+        view_premios.add_item(PremiosSelect(carpeta_id=carpeta_seleccionada))
+        
+        emb = embed_info(
+            f"📁 Carpeta: {nombre_carpeta}", 
+            "Ahora selecciona la categoría de premios de la que deseas extraer el clip reciente."
+        )
+        
+        # Editamos el mensaje actual para mostrar el segundo paso
+        await interaction.response.edit_message(embed=emb, view=view_premios)
+
+class CarpetasView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
-        self.add_item(PremiosSelect())
+        self.add_item(CarpetasSelect())
 
-@tree.command(name="premios", description="Muestra el menú para consultar los mejores clips y aportes de la liga")
+@tree.command(name="premios", description="Muestra las carpetas de temporadas y premios de la liga")
 async def premios(interaction: discord.Interaction):
     emb = embed_info(
-        "🏆 Galería de Premios y Clips Especiales", 
-        "Selecciona una opción en el menú desplegable de abajo para revivir los mejores momentos y premios del servidor de HaxBall."
+        "🏆 Galería de Carpetas y Premios Especiales", 
+        "Selecciona primero una **carpeta o temporada** en el menú desplegable de abajo para ver sus categorías."
     )
-    await interaction.response.send_message(embed=emb, view=PremiosView(), ephemeral=True)
+    await interaction.response.send_message(embed=emb, view=CarpetasView(), ephemeral=True)
 
 # ══════════════════════════════════════════════════════════════
 #  EQUIPOS
@@ -382,18 +440,13 @@ async def mercado(interaction: discord.Interaction):
 
 async def main():
     try:
-        # Inicializa la base de datos antes de conectar el bot
         await init_db()
         print("✅ Base de datos inicializada correctamente.")
-        
-        # Intenta conectar el bot a Discord
         await bot.start(TOKEN)
     except Exception as e:
         import traceback
         error_completo = traceback.format_exc()
         print(f"❌ ERROR CRÍTICO AL INICIAR:\n{error_completo}")
-        
-        # Guarda el error en un archivo para que lo puedas leer en GitHub/Render
         with open("error_bot.txt", "w", encoding="utf-8") as f:
             f.write(error_completo)
 
