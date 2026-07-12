@@ -108,15 +108,18 @@ class CategoriaPremiosSelect(discord.ui.Select):
                         break
                     continue
 
+                # Rastrear los nombres según los nuevos roles actualizados por el asistente
                 tiene_rol_first_season = any("First Season" in r.name for r in miembro.roles)
                 tiene_rol_playoffs = any("PlayOffs" in r.name or "Playoffs" in r.name for r in miembro.roles)
                 
+                # Si no tiene ningún rol de temporada actual, va directo a la carpeta de Playoffs (clips viejos)
                 if not tiene_rol_first_season and not tiene_rol_playoffs:
                     if self.temporada == "playoffs":
                         ultimo_clip = mensaje
                         break
                     continue
 
+                # Clasificación inteligente basada en la carpeta seleccionada
                 if self.temporada == "playoffs" and tiene_rol_playoffs:
                     ultimo_clip = mensaje
                     break
@@ -463,7 +466,7 @@ async def ofertar(interaction: discord.Interaction, equipo_rival: discord.Role, 
         await interaction.response.send_message(embed=embed_error(f"**{equipo_rival.name}** no tiene a **{jugador}**."), ephemeral=True); return
     oferta_id = await crear_oferta(jug["id"], equipo_comprador["id"], equipo_vendedor["id"], monto)
     emb = embed_ok("💸 Oferta enviada", f"**{equipo_comprador['nombre']}** ofrece **{fmt(monto)}** por **{jugador}** ({jug['posicion']})\nAl equipo: **{equipo_vendedor['nombre']}**\nID: `{oferta_id}`")
-    await interaction.response.send_message(emb)
+    await interaction.response.send_message(embed=emb)
     dt_rival = interaction.guild.get_member(int(equipo_vendedor["discord_id"])) if equipo_vendedor["discord_id"] else None
     if dt_rival:
         try:
@@ -583,7 +586,7 @@ async def agregar_sub_dt_cmd(interaction: discord.Interaction, usuario: discord.
     if not ok:
         await interaction.response.send_message(embed=embed_error(f"**{usuario.display_name}** ya es sub DT."), ephemeral=True); return
     emb = embed_ok("👥 Sub DT agregado", f"**{usuario.display_name}** ahora es sub DT de **{equipo['nombre']}**.\nPuede fichar, inscribir y liberar jugadores.")
-    await interaction.response.send_message(embed=emb)
+    await interaction.response.send_message(emb)
 
 @tree.command(name="quitar_sub_dt", description="Quita un sub DT de tu equipo")
 @app_commands.describe(usuario="Sub DT a quitar")
