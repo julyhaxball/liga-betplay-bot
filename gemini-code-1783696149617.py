@@ -1,4 +1,4 @@
-import discord
+  import discord
 from discord import app_commands
 from discord.ext import commands, tasks
 import os
@@ -61,7 +61,6 @@ async def get_equipo_dt_o_sub(discord_id):
 #  SISTEMA DE PREMIOS Y CLIPS RECIENTES (FILTRADO POR ROLES EXÁCTOS)
 # ══════════════════════════════════════════════════════════════
 
-# Canales únicos donde se suben los aportes multimedia por categoría
 CANALES_PREMIOS = {
     "golden_boot": 1503892522634842283,
     "playmaker": 1518398329187209246,
@@ -89,7 +88,6 @@ class CategoriaPremiosSelect(discord.ui.Select):
         )
 
     async def callback(self, interaction: discord.Interaction):
-        # Respuesta pública para todo el servidor
         await interaction.response.defer(ephemeral=False)
         categoria = self.values[0]
         canal_id = CANALES_PREMIOS.get(categoria)
@@ -101,31 +99,24 @@ class CategoriaPremiosSelect(discord.ui.Select):
 
         ultimo_clip = None
         
-        # Escaneamos los mensajes buscando el archivo que encaje en la temporada
         async for mensaje in canal.history(limit=100):
             if mensaje.attachments or "http" in mensaje.content:
-                
-                # Intentamos obtener al miembro en caché o del servidor
                 miembro = interaction.guild.get_member(mensaje.author.id)
                 if not miembro:
-                    # Si el usuario ya no está en el servidor, lo enviamos a Playoffs por defecto
                     if self.temporada == "playoffs":
                         ultimo_clip = mensaje
                         break
                     continue
 
-                # Analizamos qué roles de temporada posee el usuario actualmente
                 tiene_rol_first_season = any("First Season" in r.name for r in miembro.roles)
                 tiene_rol_playoffs = any("PlayOffs" in r.name or "Playoffs" in r.name for r in miembro.roles)
                 
-                # Si el usuario no tiene NINGÚN rol de temporada, se clasifica en Playoffs (Clips anteriores)
                 if not tiene_rol_first_season and not tiene_rol_playoffs:
                     if self.temporada == "playoffs":
                         ultimo_clip = mensaje
                         break
                     continue
 
-                # Filtrado inteligente por los nombres de tus roles
                 if self.temporada == "playoffs" and tiene_rol_playoffs:
                     ultimo_clip = mensaje
                     break
@@ -138,7 +129,6 @@ class CategoriaPremiosSelect(discord.ui.Select):
             await interaction.followup.send(f"📂 No se encontraron clips recientes en {canal.mention} que pertenezcan a la carpeta **{temp_name}**.", ephemeral=False)
             return
 
-        # Procesar archivos adjuntos para reenviarlos
         files = []
         for att in ultimo_clip.attachments:
             try:
@@ -473,7 +463,7 @@ async def ofertar(interaction: discord.Interaction, equipo_rival: discord.Role, 
         await interaction.response.send_message(embed=embed_error(f"**{equipo_rival.name}** no tiene a **{jugador}**."), ephemeral=True); return
     oferta_id = await crear_oferta(jug["id"], equipo_comprador["id"], equipo_vendedor["id"], monto)
     emb = embed_ok("💸 Oferta enviada", f"**{equipo_comprador['nombre']}** ofrece **{fmt(monto)}** por **{jugador}** ({jug['posicion']})\nAl equipo: **{equipo_vendedor['nombre']}**\nID: `{oferta_id}`")
-    await interaction.response.send_message(embed=emb)
+    await interaction.response.send_message(emb)
     dt_rival = interaction.guild.get_member(int(equipo_vendedor["discord_id"])) if equipo_vendedor["discord_id"] else None
     if dt_rival:
         try:
@@ -616,7 +606,6 @@ async def tabla(interaction: discord.Interaction):
         await interaction.response.send_message(embed=embed_info("📊 Tabla", "No hay equipos registrados.")); return
     emb = embed_info("📊 Tabla de posiciones")
 
-# Ordenar equipos por puntos, luego por diferencia de goles
     equipos.sort(key=lambda x: (x.get('puntos', 0), x.get('dg', 0)), reverse=True)
     
     descripcion = ""
@@ -625,3 +614,7 @@ async def tabla(interaction: discord.Interaction):
         
     emb.description = descripcion
     await interaction.response.send_message(embed=emb)
+
+if __name__ == "__main__":
+    if not bot.is_ready():
+        bot.run(TOKEN)
