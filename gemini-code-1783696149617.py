@@ -1,10 +1,11 @@
-import os
-import io
 import discord
-from discord.ext import commands
 from discord import app_commands
-import aiosqlite
+from discord.ext import commands, tasks
+import os
 import asyncio
+import datetime
+import aiosqlite
+import io
 import re as _re
 
 # Importaciones del módulo local database.py
@@ -31,7 +32,6 @@ COLOR_AMARILLO = 0xEF9F27
 intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
-intents.presences = True  
 bot = commands.Bot(command_prefix="!", intents=intents)
 tree = bot.tree
 
@@ -58,41 +58,21 @@ async def get_equipo_dt_o_sub(discord_id):
     return None, False
 
 # ══════════════════════════════════════════════════════════════
-#  SISTEMA DE CARPETAS Y PREMIOS (ACTUALIZADO)
+#  SISTEMA DE PREMIOS Y CLIPS RECIENTES (FILTRADO POR ROLES EXÁCTOS)
 # ══════════════════════════════════════════════════════════════
 
-# Mapeo de carpetas con sus respectivos IDs de canales para cada premio
-CARPETAS_PREMIOS = {
-    "first_season": {
-        "nombre_carpeta": "🌱 First Season",
-        "golden_boot": 1503892522634842283,
-        "playmaker": 1518398329187209246,
-        "x5": 1503893154053488700,
-        "winner_team": 1503893743747469362,
-        "puskas": 1516557926267879444
-    },
-    "second_season": {
-        "nombre_carpeta": "🔥 Second Season",
-        "golden_boot": 1503892522634842283,  # Reemplazar con IDs reales si cambian por temporada
-        "playmaker": 1518398329187209246,
-        "x5": 1503893154053488700,
-        "winner_team": 1503893743747469362,
-        "puskas": 1516557926267879444
-    },
-    "playoffs": {
-        "nombre_carpeta": "🏆 Playoffs",
-        "golden_boot": 1503892522634842283,  # Reemplazar con IDs reales si cambian para Playoffs
-        "playmaker": 1518398329187209246,
-        "x5": 1503893154053488700,
-        "winner_team": 1503893743747469362,
-        "puskas": 1516557926267879444
-    }
+# Canales únicos donde se suben los aportes multimedia por categoría
+CANALES_PREMIOS = {
+    "golden_boot": 1503892522634842283,
+    "playmaker": 1518398329187209246,
+    "x5": 1503893154053488700,
+    "winner_team": 1503893743747469362,
+    "puskas": 1516557926267879444
 }
 
-# 1. Menú Desplegable de Premios (Se activa DESPUÉS de elegir carpeta)
-class PremiosSelect(discord.ui.Select):
-    def __init__(self, carpeta_id):
-        self.carpeta_id = carpeta_id
+class CategoriaPremiosSelect(discord.ui.Select):
+    def __init__(self, temporada):
+        self.temporada = temporada  # "first_season" o "playoffs"
         options = [
             discord.SelectOption(label="⚽ Golden Boot", value="golden_boot", description="Ver los goles del máximo artillero"),
             discord.SelectOption(label="👟 Playmaker Award", value="playmaker", description="Ver las mejores asistencias de la liga"),
@@ -101,36 +81,64 @@ class PremiosSelect(discord.ui.Select):
             discord.SelectOption(label="🎯 Premio Puskas", value="puskas", description="Ver las obras de arte nominadas al mejor gol")
         ]
         super().__init__(
-            placeholder="Elige una categoría de premio...",
+            placeholder="Elige una categoría de premio para ver clips...",
             min_values=1,
             max_values=1,
             options=options,
-            custom_id="premios_select_clips"
+            custom_id="categoria_premios_select_v2"
         )
 
     async def callback(self, interaction: discord.Interaction):
-        await interaction.response.defer(ephemeral=True)
+        # Respuesta pública para todo el servidor
+        await interaction.response.defer(ephemeral=False)
         categoria = self.values[0]
-        
-        # Obtener los canales de la carpeta seleccionada anteriormente
-        canales = CARPETAS_PREMIOS.get(self.carpeta_id)
-        canal_id = canales.get(categoria) if canales else None
+        canal_id = CANALES_PREMIOS.get(categoria)
         
         canal = interaction.guild.get_channel(canal_id)
         if not canal:
-            await interaction.followup.send("❌ El canal asignado para este premio no se encuentra o el bot no tiene acceso.", ephemeral=True)
+            await interaction.followup.send("❌ El canal asignado para este premio no se encuentra disponible.", ephemeral=False)
             return
 
         ultimo_clip = None
-        async for mensaje in canal.history(limit=50):
+        
+        # Escaneamos los mensajes buscando el archivo que encaje en la temporada
+        async for mensaje in canal.history(limit=100):
             if mensaje.attachments or "http" in mensaje.content:
-                ultimo_clip = mensaje
-                break
+                
+                # Intentamos obtener al miembro en caché o del servidor
+                miembro = interaction.guild.get_member(mensaje.author.id)
+                if not miembro:
+                    # Si el usuario ya no está en el servidor, lo enviamos a Playoffs por defecto
+                    if self.temporada == "playoffs":
+                        ultimo_clip = mensaje
+                        break
+                    continue
+
+                # Analizamos qué roles de temporada posee el usuario actualmente
+                tiene_rol_first_season = any("First Season" in r.name for r in miembro.roles)
+                tiene_rol_playoffs = any("PlayOffs" in r.name or "Playoffs" in r.name for r in miembro.roles)
+                
+                # Si el usuario no tiene NINGÚN rol de temporada, se clasifica en Playoffs (Clips anteriores)
+                if not tiene_rol_first_season and not tiene_rol_playoffs:
+                    if self.temporada == "playoffs":
+                        ultimo_clip = mensaje
+                        break
+                    continue
+
+                # Filtrado inteligente por los nombres de tus roles
+                if self.temporada == "playoffs" and tiene_rol_playoffs:
+                    ultimo_clip = mensaje
+                    break
+                elif self.temporada == "first_season" and tiene_rol_first_season:
+                    ultimo_clip = mensaje
+                    break
 
         if not ultimo_clip:
-            await interaction.followup.send(f"📂 No se encontraron clips recientes en el canal {canal.mention}.", ephemeral=True)
+            temp_name = "Playoffs" if self.temporada == "playoffs" else "First Season"
+            await interaction.followup.send(f"📂 No se encontraron clips recientes en {canal.mention} que pertenezcan a la carpeta **{temp_name}**.", ephemeral=False)
             return
 
+        # Procesar archivos adjuntos para reenviarlos
         files = []
         for att in ultimo_clip.attachments:
             try:
@@ -141,60 +149,56 @@ class PremiosSelect(discord.ui.Select):
             except Exception:
                 pass
 
-        nombre_carpeta = canales["nombre_carpeta"]
-        contenido = f"🎬 **Último aporte destacado en** {canal.mention} (`{nombre_carpeta}`) (por {ultimo_clip.author.mention}):\n"
+        temp_label = "Playoffs" if self.temporada == "playoffs" else "First Season"
+        contenido = f"🎬 **[{temp_label}] Aporte destacado en** {canal.mention} (por {ultimo_clip.author.mention}):\n"
         if ultimo_clip.content:
             contenido += f"\n{ultimo_clip.content}"
 
         if files:
-            await interaction.followup.send(content=contenido, files=files, ephemeral=True)
+            await interaction.followup.send(content=contenido, files=files, ephemeral=False)
         else:
-            await interaction.followup.send(content=contenido, ephemeral=True)
+            await interaction.followup.send(content=contenido, ephemeral=False)
 
-# 2. Menú Desplegable Inicial para seleccionar la "Carpeta"
-class CarpetasSelect(discord.ui.Select):
+class TemporadaPremiosSelect(discord.ui.Select):
     def __init__(self):
         options = [
-            discord.SelectOption(label="🌱 First Season", value="first_season", description="Clips de la Primera Temporada"),
-            discord.SelectOption(label="🔥 Second Season", value="second_season", description="Clips de la Segunda Temporada"),
-            discord.SelectOption(label="🏆 Playoffs", value="playoffs", description="Clips de las fases eliminatorias")
+            discord.SelectOption(label="📁 First Season", value="first_season", description="Ver clips de la Temporada Regular", emoji="📝"),
+            discord.SelectOption(label="📁 Playoffs", value="playoffs", description="Ver clips de las Eliminatorias Directas", emoji="🔥")
         ]
         super().__init__(
-            placeholder="📁 Selecciona una carpeta / temporada...",
+            placeholder="Selecciona una carpeta / temporada...",
             min_values=1,
             max_values=1,
             options=options,
-            custom_id="carpetas_select"
+            custom_id="temporada_premios_select_v2"
         )
 
     async def callback(self, interaction: discord.Interaction):
-        carpeta_seleccionada = self.values[0]
-        nombre_carpeta = CARPETAS_PREMIOS[carpeta_seleccionada]["nombre_carpeta"]
+        temporada_elegida = self.values[0]
+        temp_label = "First Season" if temporada_elegida == "first_season" else "Playoffs"
         
-        # Creamos una nueva vista que contenga el menú de premios filtrado por esta carpeta
-        view_premios = discord.ui.View(timeout=None)
-        view_premios.add_item(PremiosSelect(carpeta_id=carpeta_seleccionada))
+        nueva_vista = discord.ui.View(timeout=None)
+        nueva_vista.add_item(CategoriaPremiosSelect(temporada_elegida))
         
-        emb = embed_info(
-            f"📁 Carpeta: {nombre_carpeta}", 
-            "Ahora selecciona la categoría de premios de la que deseas extraer el clip reciente."
+        emb_actualizado = discord.Embed(
+            title="🏆 Galería de Carpetas y Premios Especiales",
+            description=f"Has abierto la carpeta: **{temp_label}**.\nEl bot clasificará los clips buscando los roles específicos en los autores.\n\nSelecciona la categoría abajo:",
+            color=0x378ADD
         )
-        
-        # Editamos el mensaje actual para mostrar el segundo paso
-        await interaction.response.edit_message(embed=emb, view=view_premios)
+        await interaction.response.edit_message(embed=emb_actualizado, view=nueva_vista)
 
-class CarpetasView(discord.ui.View):
+class PremiosView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
-        self.add_item(CarpetasSelect())
+        self.add_item(TemporadaPremiosSelect())
 
-@tree.command(name="premios", description="Muestra las carpetas de temporadas y premios de la liga")
+@tree.command(name="premios", description="Muestra el menú para consultar los mejores clips filtrados por temporadas")
 async def premios(interaction: discord.Interaction):
     emb = embed_info(
         "🏆 Galería de Carpetas y Premios Especiales", 
-        "Selecciona primero una **carpeta o temporada** en el menú desplegable de abajo para ver sus categorías."
+        "Selecciona primero una **carpeta o temporada** en el menú desplegable de abajo para ver sus categorías correspondientes."
     )
-    await interaction.response.send_message(embed=emb, view=CarpetasView(), ephemeral=True)
+    await interaction.response.send_message(embed=emb, view=PremiosView(), ephemeral=False)
 
 # ══════════════════════════════════════════════════════════════
 #  EQUIPOS
@@ -432,23 +436,192 @@ async def mercado(interaction: discord.Interaction):
             emb.add_field(name=f"Registrados — {pos}", value="\n".join(lista[:8]), inline=True)
 
     rol_libre = discord.utils.get(interaction.guild.roles, name="👤 | Agente Libre")
+    if rol_libre and rol_libre.members:
+        agentes = [m.display_name for m in rol_libre.members if not m.bot]
+        if agentes:
+            chunk = agentes[:25]
+            emb.add_field(name=f"👥 Agentes libres ({len(agentes)})", value="\n".join(f"• {n}" for n in chunk), inline=False)
+            if len(agentes) > 25:
+                emb.set_footer(text=f"... y {len(agentes)-25} más")
+
+    if not libres_bd and (not rol_libre or not [m for m in rol_libre.members if not m.bot]):
+        emb.description = "No hay jugadores disponibles."
+
     await interaction.response.send_message(embed=emb)
 
 # ══════════════════════════════════════════════════════════════
-#  ARRANQUE SEGURO CON REGISTRO DE ERRORES (AL FINAL DEL ARCHIVO)
+#  FICHAJES CON DINERO
 # ══════════════════════════════════════════════════════════════
 
-async def main():
-    try:
-        await init_db()
-        print("✅ Base de datos inicializada correctamente.")
-        await bot.start(TOKEN)
-    except Exception as e:
-        import traceback
-        error_completo = traceback.format_exc()
-        print(f"❌ ERROR CRÍTICO AL INICIAR:\n{error_completo}")
-        with open("error_bot.txt", "w", encoding="utf-8") as f:
-            f.write(error_completo)
+@tree.command(name="ofertar", description="Haz una oferta económica por un jugador rival")
+@app_commands.describe(equipo_rival="Rol del equipo rival", jugador="Nombre del jugador", monto="Cantidad en dólares")
+async def ofertar(interaction: discord.Interaction, equipo_rival: discord.Role, jugador: str, monto: int):
+    equipo_comprador, _ = await get_equipo_dt_o_sub(str(interaction.user.id))
+    if not equipo_comprador:
+        await interaction.response.send_message(embed=embed_error("No tienes equipo."), ephemeral=True); return
+    if monto <= 0:
+        await interaction.response.send_message(embed=embed_error("El monto debe ser mayor a $0."), ephemeral=True); return
+    if equipo_comprador["presupuesto"] < monto:
+        await interaction.response.send_message(embed=embed_error(f"No tienes suficiente presupuesto.\nDisponible: **{fmt(equipo_comprador['presupuesto'])}**"), ephemeral=True); return
+    equipo_vendedor = await get_equipo_by_rol(str(equipo_rival.id))
+    if not equipo_vendedor:
+        await interaction.response.send_message(embed=embed_error(f"**{equipo_rival.name}** no está en la liga."), ephemeral=True); return
+    if equipo_comprador["id"] == equipo_vendedor["id"]:
+        await interaction.response.send_message(embed=embed_error("No puedes hacerte una oferta a ti mismo."), ephemeral=True); return
+    jug = await get_jugador_by_nombre(jugador)
+    if not jug or jug["equipo_id"] != equipo_vendedor["id"]:
+        await interaction.response.send_message(embed=embed_error(f"**{equipo_rival.name}** no tiene a **{jugador}**."), ephemeral=True); return
+    oferta_id = await crear_oferta(jug["id"], equipo_comprador["id"], equipo_vendedor["id"], monto)
+    emb = embed_ok("💸 Oferta enviada", f"**{equipo_comprador['nombre']}** ofrece **{fmt(monto)}** por **{jugador}** ({jug['posicion']})\nAl equipo: **{equipo_vendedor['nombre']}**\nID: `{oferta_id}`")
+    await interaction.response.send_message(embed=emb)
+    dt_rival = interaction.guild.get_member(int(equipo_vendedor["discord_id"])) if equipo_vendedor["discord_id"] else None
+    if dt_rival:
+        try:
+            notif = discord.Embed(title="📨 ¡Tienes una oferta!", description=f"**{equipo_comprador['nombre']}** ofrece **{fmt(monto)}** por **{jugador}** ({jug['posicion']})\n\nUsa `/mis_ofertas` para verla.", color=COLOR_AMARILLO)
+            await dt_rival.send(embed=notif)
+        except Exception: pass
 
-if __name__ == "__main__":
-    asyncio.run(main())
+@tree.command(name="mis_ofertas", description="Ver las ofertas pendientes para tu equipo")
+async def mis_ofertas(interaction: discord.Interaction):
+    equipo = await get_equipo_by_discord(str(interaction.user.id))
+    if not equipo:
+        await interaction.response.send_message(embed=embed_error("No tienes equipo."), ephemeral=True); return
+    ofertas = await get_ofertas_pendientes(equipo["id"])
+    if not ofertas:
+        await interaction.response.send_message(embed=embed_info("📨 Ofertas pendientes", "No tienes ofertas pendientes."), ephemeral=True); return
+    emb = embed_info("📨 Ofertas pendientes", f"Tienes **{len(ofertas)}** oferta(s):")
+    for o in ofertas:
+        jug = await get_jugador_by_id(o["jugador_id"])
+        eq = await get_equipo_by_id(o["equipo_comprador_id"])
+        emb.add_field(name=f"Oferta ID: {o['id']}", value=f"**{eq['nombre']}** ofrece **{fmt(o['monto'])}** por **{jug['nombre']}** ({jug['posicion']})\n✅ `/aceptar_oferta id:{o['id']}` · ❌ `/rechazar_oferta id:{o['id']}`", inline=False)
+    await interaction.response.send_message(embed=emb, ephemeral=True)
+
+@tree.command(name="aceptar_oferta", description="Acepta una oferta de fichaje")
+@app_commands.describe(id="ID de la oferta")
+async def aceptar_oferta_cmd(interaction: discord.Interaction, id: int):
+    equipo = await get_equipo_by_discord(str(interaction.user.id))
+    if not equipo:
+        await interaction.response.send_message(embed=embed_error("No tienes equipo."), ephemeral=True); return
+    oferta = await get_oferta(id)
+    if not oferta or oferta["equipo_vendedor_id"] != equipo["id"] or oferta["estado"] != "pendiente":
+        await interaction.response.send_message(embed=embed_error("Oferta no válida o ya respondida."), ephemeral=True); return
+    await aceptar_oferta(id)
+    jug = await get_jugador_by_id(oferta["jugador_id"])
+    eq_c = await get_equipo_by_id(oferta["equipo_comprador_id"])
+    eq_v = await get_equipo_by_id(oferta["equipo_vendedor_id"])
+    
+    if jug["discord_id"]:
+        try:
+            member = interaction.guild.get_member(int(jug["discord_id"])) if jug["discord_id"] else None
+            if member:
+                if eq_v["rol_id"]:
+                    rol_v = interaction.guild.get_role(int(eq_v["rol_id"])) if eq_v["rol_id"] else None
+                    if rol_v: await member.remove_roles(rol_v)
+                if eq_c["rol_id"]:
+                    rol_c = interaction.guild.get_role(int(eq_c["rol_id"])) if eq_c["rol_id"] else None
+                    if rol_c: await member.add_roles(rol_c)
+        except Exception: pass
+        
+    try:
+        from generar_imagen import generar_fichaje
+        buf = generar_fichaje(jug["nombre"], jug["posicion"], jug["dorsal"] or 0, eq_v["nombre"], eq_c["nombre"], oferta["monto"])
+        file = discord.File(buf, filename="fichaje.png")
+        emb = embed_ok("✅ ¡Transferencia completada!", f"**{jug['nombre']}** → **{eq_c['nombre']}**\n💰 **{fmt(oferta['monto'])}**")
+        emb.set_image(url="attachment://fichaje.png")
+        await interaction.response.send_message(embed=emb, file=file)
+
+        if interaction.guild:
+            canal_fichajes = discord.utils.get(interaction.guild.text_channels, name="✅・fichajes")
+            if canal_fichajes:
+                from generar_imagen import generar_fichaje as gf2
+                buf2 = gf2(jug["nombre"], jug["posicion"], jug["dorsal"] or 0, eq_v["nombre"], eq_c["nombre"], oferta["monto"])
+                file2 = discord.File(buf2, filename="fichaje.png")
+                emb2 = embed_ok("⚽ ¡Fichaje oficial!", f"**{jug['nombre']}** ({jug['posicion']}) se une a **{eq_c['nombre']}**\n💰 Traspaso: **{fmt(oferta['monto'])}**")
+                emb2.set_image(url="attachment://fichaje.png")
+                await canal_fichajes.send(embed=emb2, file=file2)
+    except Exception:
+        emb = embed_ok("✅ ¡Transferencia completada!", f"**{jug['nombre']}** → **{eq_c['nombre']}**\n💰 **{fmt(oferta['monto'])}**")
+        await interaction.response.send_message(embed=emb)
+        if interaction.guild:
+            canal_fichajes = discord.utils.get(interaction.guild.text_channels, name="✅・fichajes")
+            if canal_fichajes:
+                emb2 = embed_ok("⚽ ¡Fichaje oficial!", f"**{jug['nombre']}** ({jug['posicion']}) se une a **{eq_c['nombre']}**\n💰 Traspaso: **{fmt(oferta['monto'])}**")
+                await canal_fichajes.send(embed=emb2)
+                
+    dt_c = interaction.guild.get_member(int(eq_c["discord_id"])) if eq_c["discord_id"] else None
+    if dt_c:
+        try: await dt_c.send(embed=embed_ok("🎉 ¡Oferta aceptada!", f"**{eq_v['nombre']}** aceptó tu oferta.\n**{jug['nombre']}** ya es tuyo."))
+        except Exception: pass
+
+@tree.command(name="rechazar_oferta", description="Rechaza una oferta de fichaje")
+@app_commands.describe(id="ID de la oferta")
+async def rechazar_oferta_cmd(interaction: discord.Interaction, id: int):
+    equipo = await get_equipo_by_discord(str(interaction.user.id))
+    if not equipo:
+        await interaction.response.send_message(embed=embed_error("No tienes equipo."), ephemeral=True); return
+    oferta = await get_oferta(id)
+    if not oferta or oferta["equipo_vendedor_id"] != equipo["id"] or oferta["estado"] != "pendiente":
+        await interaction.response.send_message(embed=embed_error("Oferta no válida o ya respondida."), ephemeral=True); return
+    await rechazar_oferta(id)
+    jug = await get_jugador_by_id(oferta["jugador_id"])
+    eq_c = await get_equipo_by_id(oferta["equipo_comprador_id"])
+    await interaction.response.send_message(embed=embed_error(f"Oferta de **{eq_c['nombre']}** por **{jug['nombre']}** rechazada."))
+    dt_c = interaction.guild.get_member(int(eq_c["discord_id"])) if eq_c["discord_id"] else None
+    if dt_c:
+        try: await dt_c.send(embed=discord.Embed(title="❌ Oferta rechazada", description=f"**{equipo['nombre']}** rechazó tu oferta por **{jug['nombre']}**.", color=COLOR_ERROR))
+        except Exception: pass
+
+# ══════════════════════════════════════════════════════════════
+#  SUB DTS
+# ══════════════════════════════════════════════════════════════
+
+@tree.command(name="agregar_sub_dt", description="Agrega un sub DT a tu equipo")
+@app_commands.describe(usuario="Usuario que será sub DT")
+async def agregar_sub_dt_cmd(interaction: discord.Interaction, usuario: discord.Member):
+    equipo = await get_equipo_by_discord(str(interaction.user.id))
+    if not equipo:
+        await interaction.response.send_message(embed=embed_error("Solo el DT principal puede agregar sub DTs."), ephemeral=True); return
+    if usuario.id == interaction.user.id:
+        await interaction.response.send_message(embed=embed_error("No puedes agregarte a ti mismo."), ephemeral=True); return
+    otro = await get_equipo_by_discord(str(usuario.id))
+    if otro:
+        await interaction.response.send_message(embed=embed_error(f"**{usuario.display_name}** ya es DT de **{otro['nombre']}**."), ephemeral=True); return
+    subs = await get_sub_dts(equipo["id"])
+    if len(subs) >= 2:
+        await interaction.response.send_message(embed=embed_error("Ya tienes 2 sub DTs, ese es el máximo."), ephemeral=True); return
+    ok = await agregar_sub_dt(equipo["id"], str(usuario.id))
+    if not ok:
+        await interaction.response.send_message(embed=embed_error(f"**{usuario.display_name}** ya es sub DT."), ephemeral=True); return
+    emb = embed_ok("👥 Sub DT agregado", f"**{usuario.display_name}** ahora es sub DT de **{equipo['nombre']}**.\nPuede fichar, inscribir y liberar jugadores.")
+    await interaction.response.send_message(embed=emb)
+
+@tree.command(name="quitar_sub_dt", description="Quita un sub DT de tu equipo")
+@app_commands.describe(usuario="Sub DT a quitar")
+async def quitar_sub_dt_cmd(interaction: discord.Interaction, usuario: discord.Member):
+    equipo = await get_equipo_by_discord(str(interaction.user.id))
+    if not equipo:
+        await interaction.response.send_message(embed=embed_error("Solo el DT principal puede quitar sub DTs."), ephemeral=True); return
+    await quitar_sub_dt(equipo["id"], str(usuario.id))
+    emb = embed_ok("👥 Sub DT eliminado", f"**{usuario.display_name}** ya no es sub DT de **{equipo['nombre']}**.")
+    await interaction.response.send_message(emb)
+
+# ══════════════════════════════════════════════════════════════
+#  LIGA
+# ══════════════════════════════════════════════════════════════
+
+@tree.command(name="tabla", description="Tabla de posiciones")
+async def tabla(interaction: discord.Interaction):
+    equipos = await get_todos_equipos()
+    if not equipos:
+        await interaction.response.send_message(embed=embed_info("📊 Tabla", "No hay equipos registrados.")); return
+    emb = embed_info("📊 Tabla de posiciones")
+
+# Ordenar equipos por puntos, luego por diferencia de goles
+    equipos.sort(key=lambda x: (x.get('puntos', 0), x.get('dg', 0)), reverse=True)
+    
+    descripcion = ""
+    for i, eq in enumerate(equipos, 1):
+        descripcion += f"**{i}. {eq['nombre']}** - {eq.get('puntos', 0)} pts (PJ: {eq.get('pj', 0)} | DG: {eq.get('dg', 0)})\n"
+        
+    emb.description = descripcion
+    await interaction.response.send_message(embed=emb)
