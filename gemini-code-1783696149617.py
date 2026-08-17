@@ -1,33 +1,22 @@
 import discord
 from discord import app_commands
-from discord.ext import commands, tasks
+from discord.ext import commands
 import os
-import asyncio
-import datetime
-import aiosqlite
+import subprocess
+import json
 import io
-import re as _re
+import aiosqlite
 
-# Importaciones del módulo local database.py
-from database import (
-    init_db, get_equipo_by_discord, crear_equipo, get_todos_equipos,
-    inscribir_jugador, get_plantilla, get_jugadores_libres, get_jugador_by_nombre,
-    fichar_jugador, liberar_jugador, get_equipo_by_nombre, get_equipo_by_id,
-    get_equipo_by_rol, crear_partido, get_fixture, cargar_resultado,
-    generar_fixture_automatico, crear_oferta, get_oferta, get_ofertas_pendientes,
-    aceptar_oferta, rechazar_oferta, get_jugador_by_id,
-    agregar_sub_dt, quitar_sub_dt, get_equipo_by_sub_dt, get_sub_dts,
-    activar_contrato, get_todos_jugadores_con_sueldo, incrementar_pago,
-    dar_presupuesto_mensual, get_roles_equipos, DB_PATH
-)
+# ══════════════════════════════════════════════════════════════
+#  CONFIGURACIÓN INICIAL
+# ══════════════════════════════════════════════════════════════
 
-TOKEN = os.getenv("DISCORD_TOKEN", "MTUwODYyMTYzMjI4Mzg2OTI1NQ.GcNQYR.QE_FlSK32o4pkVlDUWqEgeEeHotMstuqAHYXs4")
-ADMIN_ROL = "Admin"
+TOKEN = os.getenv("DISCORD_TOKEN", "TU_TOKEN_AQUI")
+DB_PATH = "liga_haxball.db"
 
-COLOR_OK      = 0x1D9E75
-COLOR_ERROR   = 0xD85A30
-COLOR_INFO    = 0x378ADD
-COLOR_AMARILLO = 0xEF9F27
+COLOR_OK = 0x1D9E75
+COLOR_ERROR = 0xD85A30
+COLOR_INFO = 0x378ADD
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -35,30 +24,427 @@ intents.members = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 tree = bot.tree
 
-def es_admin(i): 
-    return i.user.guild_permissions.administrator or any(r.name == ADMIN_ROL for r in i.user.roles)
-
-def embed_ok(t, d=""): 
-    return discord.Embed(title=t, description=d, color=COLOR_OK)
-
-def embed_error(d): 
-    return discord.Embed(title="❌ Error", description=d, color=COLOR_ERROR)
-
-def embed_info(t, d=""): 
-    return discord.Embed(title=t, description=d, color=COLOR_INFO)
-
-def fmt(m): 
-    return f"${m:,}".replace(",", ".")
-
-async def get_equipo_dt_o_sub(discord_id):
-    e = await get_equipo_by_discord(discord_id)
-    if e: return e, True
-    e = await get_equipo_by_sub_dt(discord_id)
-    if e: return e, False
-    return None, False
+def embed_ok(t, d=""): return discord.Embed(title=t, description=d, color=COLOR_OK)
+def embed_error(d): return discord.Embed(title="❌ Error", description=d, color=COLOR_ERROR)
+def embed_info(t, d=""): return discord.Embed(title=t, description=d, color=COLOR_INFO)
 
 # ══════════════════════════════════════════════════════════════
-#  SISTEMA DE PREMIOS Y CLIPS RECIENTES (FILTRADO POR ROLES EXÁCTOS)
+#  BASE DE DATOS - INICIALIZACIÓN
+# ══════════════════════════════════════════════════════════════
+
+async def init_db():
+    async with aiosqlite.connect(DB_PATH) as db:
+        # Tabla de Equipos
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS equipos (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                nombre TEXT UNIQUE,
+                dt_id TEXT,
+                rol_id TEXT,
+                logo_url TEXT,
+                puntos INTEGER DEFAULT 0,
+                pj INTEGER DEFAULT 0,
+                pg INTEGER DEFAULT 0,
+                pe INTEGER DEFAULT 0,
+                pp INTEGER DEFAULT 0,
+                gf INTEGER DEFAULT 0,
+                gc INTEGER DEFAULT 0
+            )
+        """)
+        # Tabla de Jugadores
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS jugadores (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                nombre TEXT,
+                discord_id TEXT,
+                equipo_id INTEGER,
+                goles INTEGER DEFAULT 0,
+                FOREIGN KEY(equipo_id) REFERENCES equipos(id)
+            )
+        """)
+        # Tabla de Fixture
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS fixture (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                fecha_num INTEGER,
+                equipo_local TEXT,
+                equipo_visitante TEXT,
+                estado TEXT DEFAULT 'Pendiente'
+            )
+        """)
+        # Tabla de Sanciones
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS sanciones (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                jugador_id TEXT,
+                nombre_jugador TEXT,
+                motivo TEXT,
+                tipo TEXT,
+                partidos_suspension INTEGER DEFAULT 1
+            )
+        """)
+        await db.commit()
+
+@bot.event
+async def on_ready():
+    await init_db()
+    try:
+        await tree.sync()
+    except Exception as e:
+        print(f"Error sincronizando comandos: {e}")
+    print(f"🤖 Bot encendido correctamente como {bot.user}")
+
+# Función para sugerir nombres de equipos al escribir comandos
+async def equipo_autocomplete(interaction: discord.Interaction, current: str) -> list[app_commands.Choice[str]]:
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute("SELECT nombre FROM equipos WHERE nombre LIKE ? LIMIT 25", (f"%{current}%",)) as cursor:
+            filas = await cursor.fetchall()
+            return [app_commands.Choice(name=row[0], value=row[0]) for row in filas]
+
+# ══════════════════════════════════════════════════════════════
+#  SISTEMA DE EQUIPOS Y FICHAJES
+# ══════════════════════════════════════════════════════════════
+
+@tree.command(name="inscribir_equipo", description="Inscribe tu equipo y crea el rol en Discord automáticamente")
+@app_commands.describe(nombre="Nombre oficial de tu equipo", logo_url="Enlace directo a la imagen del logo")
+async def inscribir_equipo(interaction: discord.Interaction, nombre: str, logo_url: str):
+    await interaction.response.defer()
+
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute("SELECT id FROM equipos WHERE dt_id = ?", (str(interaction.user.id),)) as cursor:
+            if await cursor.fetchone():
+                await interaction.followup.send(embed=embed_error("Ya tienes un equipo inscrito como DT."), ephemeral=True)
+                return
+
+        try:
+            nuevo_rol = await interaction.guild.create_role(
+                name=nombre,
+                mentionable=True,
+                reason=f"Rol de equipo creado por {interaction.user.display_name}"
+            )
+            await interaction.user.add_roles(nuevo_rol)
+        except Exception as e:
+            await interaction.followup.send(embed=embed_error(f"No se pudo crear el rol en Discord: {e}"), ephemeral=True)
+            return
+
+        try:
+            await db.execute(
+                "INSERT INTO equipos (nombre, dt_id, rol_id, logo_url) VALUES (?, ?, ?, ?)",
+                (nombre, str(interaction.user.id), str(nuevo_rol.id), logo_url)
+            )
+            await db.commit()
+        except Exception:
+            await nuevo_rol.delete()
+            await interaction.followup.send(embed=embed_error("Ya existe un equipo con ese nombre."), ephemeral=True)
+            return
+
+    emb = embed_ok("🛡️ ¡Equipo Inscrito Exitosamente!", f"**Equipo:** {nombre}\n**DT:** {interaction.user.mention}\n**Rol Creado:** {nuevo_rol.mention}")
+    emb.set_thumbnail(url=logo_url)
+    await interaction.followup.send(embed=emb)
+
+@tree.command(name="fichar_jugador", description="Ficha a un usuario para tu plantilla")
+@app_commands.describe(usuario="Jugador de Discord a fichar")
+async def fichar_jugador(interaction: discord.Interaction, usuario: discord.Member):
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute("SELECT * FROM equipos WHERE dt_id = ?", (str(interaction.user.id),)) as cursor:
+            equipo = await cursor.fetchone()
+        
+        if not equipo:
+            await interaction.response.send_message(embed=embed_error("No eres DT de ningún equipo registrado."), ephemeral=True)
+            return
+
+        async with db.execute("SELECT * FROM jugadores WHERE discord_id = ?", (str(usuario.id),)) as cursor:
+            jugador = await cursor.fetchone()
+
+        if jugador and jugador["equipo_id"]:
+            await interaction.response.send_message(embed=embed_error(f"**{usuario.display_name}** ya pertenece a otro equipo."), ephemeral=True)
+            return
+
+        if jugador:
+            await db.execute("UPDATE jugadores SET equipo_id = ? WHERE discord_id = ?", (equipo["id"], str(usuario.id)))
+        else:
+            await db.execute("INSERT INTO jugadores (nombre, discord_id, equipo_id) VALUES (?, ?, ?)", (usuario.display_name, str(usuario.id), equipo["id"]))
+        
+        await db.commit()
+
+    if equipo["rol_id"]:
+        try:
+            rol = interaction.guild.get_role(int(equipo["rol_id"]))
+            if rol: await usuario.add_roles(rol)
+        except Exception: pass
+
+    emb = embed_ok("🤝 ¡Fichaje Oficial!", f"**{usuario.mention}** ahora es nuevo jugador de **{equipo['nombre']}**.")
+    if equipo["logo_url"]: emb.set_thumbnail(url=equipo["logo_url"])
+    await interaction.response.send_message(embed=emb)
+
+# ══════════════════════════════════════════════════════════════
+#  REPLAYS, RESULTADOS Y TABLA AUTOMÁTICA
+# ══════════════════════════════════════════════════════════════
+
+@tree.command(name="replay", description="Procesa un partido .hbr2 y actualiza la liga")
+@app_commands.describe(archivo="Archivo .hbr2", equipo_local="Equipo Local (Rojo)", equipo_visitante="Equipo Visitante (Azul)")
+@app_commands.autocomplete(equipo_local=equipo_autocomplete, equipo_visitante=equipo_autocomplete)
+async def replay(interaction: discord.Interaction, archivo: discord.Attachment, equipo_local: str, equipo_visitante: str):
+    await interaction.response.defer()
+
+    if not archivo.filename.endswith(".hbr2"):
+        await interaction.followup.send("❌ El archivo debe ser de extensión **.hbr2**", ephemeral=True)
+        return
+
+    if equipo_local == equipo_visitante:
+        await interaction.followup.send("❌ El equipo local y el visitante no pueden ser el mismo.", ephemeral=True)
+        return
+
+    path_temp = f"temp_{archivo.filename}"
+    await archivo.save(path_temp)
+
+    try:
+        proceso = subprocess.run(["node", "parse_replay.js", path_temp], capture_output=True, text=True)
+        datos = json.loads(proceso.stdout)
+
+        if "error" in datos:
+            await interaction.followup.send(f"❌ Error leyendo el replay: {datos['error']}")
+            return
+
+        g_red, g_blue = datos["redScore"], datos["blueScore"]
+
+        async with aiosqlite.connect(DB_PATH) as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute("SELECT * FROM equipos WHERE nombre = ?", (equipo_local,)) as c: eq_loc = await c.fetchone()
+            async with db.execute("SELECT * FROM equipos WHERE nombre = ?", (equipo_visitante,)) as c: eq_vis = await c.fetchone()
+
+            if not eq_loc or not eq_vis:
+                await interaction.followup.send(embed=embed_error("Uno o ambos equipos no están registrados en la base de datos."))
+                return
+
+            pts_loc, pts_vis = 0, 0
+            pg_loc, pe_loc, pp_loc = 0, 0, 0
+            pg_vis, pe_vis, pp_vis = 0, 0, 0
+
+            if g_red > g_blue:
+                pts_loc, pg_loc, pp_vis = 3, 1, 1
+            elif g_blue > g_red:
+                pts_vis, pg_vis, pp_loc = 3, 1, 1
+            else:
+                pts_loc, pts_vis = 1, 1
+                pe_loc, pe_vis = 1, 1
+
+            # Actualizar Local
+            await db.execute("""
+                UPDATE equipos SET 
+                puntos = puntos + ?, pj = pj + 1, pg = pg + ?, pe = pe + ?, pp = pp + ?, gf = gf + ?, gc = gc + ?
+                WHERE nombre = ?
+            """, (pts_loc, pg_loc, pe_loc, pp_loc, g_red, g_blue, equipo_local))
+
+            # Actualizar Visitante
+            await db.execute("""
+                UPDATE equipos SET 
+                puntos = puntos + ?, pj = pj + 1, pg = pg + ?, pe = pe + ?, pp = pp + ?, gf = gf + ?, gc = gc + ?
+                WHERE nombre = ?
+            """, (pts_vis, pg_vis, pe_vis, pp_vis, g_blue, g_red, equipo_visitante))
+
+            # Registrar goles de jugadores
+            for g in datos["goals"]:
+                nombre_j = g['player']
+                await db.execute("""
+                    INSERT INTO jugadores (nombre, goles) VALUES (?, 1)
+                    ON CONFLICT(discord_id) DO UPDATE SET goles = goles + 1
+                """, (nombre_j,))
+
+            # Marcar partido como jugado en el fixture si existía
+            await db.execute("""
+                UPDATE fixture SET estado = 'Finalizado' 
+                WHERE (equipo_local = ? AND equipo_visitante = ?) AND estado = 'Pendiente'
+            """, (equipo_local, equipo_visitante))
+
+            await db.commit()
+
+            # --- VERIFICACIÓN DE JORNADA COMPLETA ---
+            async with db.execute("SELECT MIN(pj), MAX(pj), COUNT(DISTINCT pj) FROM equipos") as c:
+                row = await c.fetchone()
+                min_pj, max_pj, distinct_pj = row[0], row[1], row[2]
+
+            # Si todos jugaron la misma cantidad de partidos y ya han jugado al menos 1
+            if distinct_pj == 1 and min_pj > 0:
+                canal_tabla = discord.utils.get(interaction.guild.text_channels, name="tabla")
+                if canal_tabla:
+                    async with db.execute("SELECT * FROM equipos ORDER BY puntos DESC, (gf - gc) DESC, gf DESC") as cursor:
+                        equipos_tabla = await cursor.fetchall()
+
+                    desc_t = ""
+                    for idx, eq in enumerate(equipos_tabla, 1):
+                        dg = eq["gf"] - eq["gc"]
+                        desc_t += f"**{idx}. {eq['nombre']}** — `{eq['puntos']} pts` | PJ: {eq['pj']} | PG: {eq['pg']} | PE: {eq['pe']} | PP: {eq['pp']} | DG: {dg}\n"
+
+                    emb_tabla = embed_info(f"📊 Tabla de Posiciones Oficial — Jornada {min_pj} Concluida", desc_t)
+                    await canal_tabla.send(embed=emb_tabla)
+
+        # Respuesta Embed del Replay
+        emb = embed_ok("⚽ Partido Procesado y Registrado", f"**{equipo_local}** `{g_red}` - `{g_blue}` **{equipo_visitante}**")
+        
+        texto_goles = ""
+        for g in datos["goals"]:
+            m = f"{g['time'] // 60}:{g['time'] % 60:02d}"
+            eq_nom = equipo_local if g['team'] == 'red' else equipo_visitante
+            texto_goles += f"⚽ **{g['player']}** ({eq_nom}) - Min {m}\n"
+
+        emb.add_field(name="🎯 Anotaciones", value=texto_goles if texto_goles else "Partido sin goles.", inline=False)
+        await interaction.followup.send(embed=emb)
+
+    except Exception as e:
+        await interaction.followup.send(f"❌ Ocurrió un error al procesar el archivo: {e}")
+    finally:
+        if os.path.exists(path_temp): os.remove(path_temp)
+
+@tree.command(name="tabla", description="Muestra la tabla de posiciones en tiempo real")
+async def tabla(interaction: discord.Interaction):
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute("SELECT * FROM equipos ORDER BY puntos DESC, (gf - gc) DESC, gf DESC") as cursor:
+            equipos = await cursor.fetchall()
+
+    if not equipos:
+        await interaction.response.send_message(embed=embed_info("📊 Tabla de Posiciones", "No hay equipos registrados aún."))
+        return
+
+    desc = ""
+    for idx, eq in enumerate(equipos, 1):
+        dg = eq["gf"] - eq["gc"]
+        desc += f"**{idx}. {eq['nombre']}** — `{eq['puntos']} pts` | PJ: {eq['pj']} | PG: {eq['pg']} | PE: {eq['pe']} | PP: {eq['pp']} | DG: {dg}\n"
+
+    emb = embed_info("📊 Tabla de Posiciones Oficial", desc)
+    await interaction.response.send_message(embed=emb)
+
+@tree.command(name="goleadores", description="Muestra el ranking de goleadores")
+async def goleadores(interaction: discord.Interaction):
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute("SELECT * FROM jugadores WHERE goles > 0 ORDER BY goles DESC LIMIT 10") as cursor:
+            jugadores = await cursor.fetchall()
+
+    if not jugadores:
+        await interaction.response.send_message(embed=embed_info("👟 Tabla de Goleadores", "Aún no hay goles registrados."))
+        return
+
+    desc = ""
+    medallas = ["🥇", "🥈", "🥉"]
+    for idx, j in enumerate(jugadores):
+        prefix = medallas[idx] if idx < 3 else f"**{idx+1}.**"
+        desc += f"{prefix} **{j['nombre']}** — `{j['goles']} goles`\n"
+
+    emb = embed_info("👟 Top 10 Goleadores", desc)
+    await interaction.response.send_message(embed=emb)
+
+# ══════════════════════════════════════════════════════════════
+#  SISTEMA DE FIXTURE
+# ══════════════════════════════════════════════════════════════
+
+@tree.command(name="crear_partido", description="Admin: Programa un partido en el fixture")
+@app_commands.describe(fecha_num="Número de jornada", equipo_local="Equipo Local", equipo_visitante="Equipo Visitante")
+@app_commands.autocomplete(equipo_local=equipo_autocomplete, equipo_visitante=equipo_autocomplete)
+async def crear_partido(interaction: discord.Interaction, fecha_num: int, equipo_local: str, equipo_visitante: str):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "INSERT INTO fixture (fecha_num, equipo_local, equipo_visitante) VALUES (?, ?, ?)",
+            (fecha_num, equipo_local, equipo_visitante)
+        )
+        await db.commit()
+
+    emb = embed_ok("📅 Partido Programado", f"**Jornada {fecha_num}:** {equipo_local} 🆚 {equipo_visitante}\n**Estado:** Pendiente")
+    await interaction.response.send_message(embed=emb)
+
+class EquiposFixtureSelect(discord.ui.Select):
+    def __init__(self, lista_equipos):
+        options = [discord.SelectOption(label=eq, value=eq, emoji="🛡️") for eq in lista_equipos[:25]]
+        super().__init__(placeholder="Selecciona un equipo para ver sus partidos...", min_values=1, max_values=1, options=options)
+
+    async def callback(self, interaction: discord.Interaction):
+        await interaction.response.defer()
+        equipo_sel = self.values[0]
+
+        async with aiosqlite.connect(DB_PATH) as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute("""
+                SELECT * FROM fixture 
+                WHERE (equipo_local = ? OR equipo_visitante = ?) AND estado = 'Pendiente'
+                ORDER BY fecha_num ASC
+            """, (equipo_sel, equipo_sel)) as cursor:
+                partidos = await cursor.fetchall()
+
+        if not partidos:
+            await interaction.followup.send(embed=embed_info(f"📅 Fixture de {equipo_sel}", "¡No tiene partidos pendientes!"))
+            return
+
+        desc = ""
+        for p in partidos:
+            desc += f"📌 **Jornada {p['fecha_num']}:** {p['equipo_local']} 🆚 {p['equipo_visitante']}\n"
+
+        emb = embed_info(f"📅 Partidos Pendientes — {equipo_sel}", desc)
+        await interaction.followup.send(embed=emb)
+
+class FixtureView(discord.ui.View):
+    def __init__(self, lista_equipos):
+        super().__init__(timeout=None)
+        self.add_item(EquiposFixtureSelect(lista_equipos))
+
+@tree.command(name="fixture", description="Consulta los partidos pendientes de un equipo")
+async def fixture(interaction: discord.Interaction):
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute("SELECT nombre FROM equipos") as cursor:
+            filas = await cursor.fetchall()
+            lista_equipos = [row[0] for row in filas]
+
+    if not lista_equipos:
+        await interaction.response.send_message(embed=embed_info("📅 Fixture", "No hay equipos registrados en la liga."))
+        return
+
+    emb = embed_info("📅 Consulta de Fixture", "Selecciona un equipo del menú desplegable para ver sus partidos pendientes:")
+    await interaction.response.send_message(embed=emb, view=FixtureView(lista_equipos))
+
+# ══════════════════════════════════════════════════════════════
+#  SISTEMA DE SANCTIONES Y TARJETAS
+# ══════════════════════════════════════════════════════════════
+
+@tree.command(name="sancionar", description="Admin: Sanciona a un jugador o le aplica tarjeta")
+@app_commands.describe(usuario="Jugador a sancionar", tipo="Tipo de sanción", partidos="Partidos de suspensión", motivo="Razón de la sanción")
+@app_commands.choices(tipo=[
+    app_commands.Choice(name="🟨 Tarjeta Amarilla", value="Amarilla"),
+    app_commands.Choice(name="🟥 Tarjeta Roja", value="Roja"),
+    app_commands.Choice(name="🚫 Sanción Administrativa", value="Sancion")
+])
+async def sancionar(interaction: discord.Interaction, usuario: discord.Member, tipo: str, partidos: int, motivo: str):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "INSERT INTO sanciones (jugador_id, nombre_jugador, motivo, tipo, partidos_suspension) VALUES (?, ?, ?, ?, ?)",
+            (str(usuario.id), usuario.display_name, motivo, tipo, partidos)
+        )
+        await db.commit()
+
+    iconos = {"Amarilla": "🟨", "Roja": "🟥", "Sancion": "🚫"}
+    emb = embed_error(f"{iconos.get(tipo, '⚠️')} **Sanción Aplicada a {usuario.mention}**\n\n**Tipo:** {tipo}\n**Partidos suspendido:** {partidos}\n**Motivo:** {motivo}")
+    await interaction.response.send_message(embed=emb)
+
+@tree.command(name="sancionados", description="Muestra la lista de jugadores suspendidos en la liga")
+async def sancionados(interaction: discord.Interaction):
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute("SELECT * FROM sanciones WHERE partidos_suspension > 0") as cursor:
+            lista = await cursor.fetchall()
+
+    if not lista:
+        await interaction.response.send_message(embed=embed_info("🛡️ Sanciones", "No hay jugadores suspendidos en este momento."))
+        return
+
+    desc = ""
+    for s in lista:
+        desc += f"👤 **{s['nombre_jugador']}** — `{s['tipo']}` | Suspendido: **{s['partidos_suspension']} partido(s)**\n*Motivo:* {s['motivo']}\n\n"
+
+    emb = embed_info("🚨 Lista de Jugadores Sancionados", desc)
+    await interaction.response.send_message(embed=emb)
+
+# ══════════════════════════════════════════════════════════════
+#  GALERÍA DE PREMIOS
 # ══════════════════════════════════════════════════════════════
 
 CANALES_PREMIOS = {
@@ -71,65 +457,42 @@ CANALES_PREMIOS = {
 
 class CategoriaPremiosSelect(discord.ui.Select):
     def __init__(self, temporada):
-        self.temporada = temporada  # "first_season" o "playoffs"
+        self.temporada = temporada
         options = [
-            discord.SelectOption(label="⚽ Golden Boot", value="golden_boot", description="Ver los goles del máximo artillero"),
-            discord.SelectOption(label="👟 Playmaker Award", value="playmaker", description="Ver las mejores asistencias de la liga"),
-            discord.SelectOption(label="⭐ Quinteto Ideal (x5)", value="x5", description="Ver clips del quinteto ideal de la jornada"),
-            discord.SelectOption(label="👑 Winner Team", value="winner_team", description="Ver las jugadas del equipo campeón"),
-            discord.SelectOption(label="🎯 Premio Puskas", value="puskas", description="Ver las obras de arte nominadas al mejor gol")
+            discord.SelectOption(label="⚽ Golden Boot", value="golden_boot"),
+            discord.SelectOption(label="👟 Playmaker Award", value="playmaker"),
+            discord.SelectOption(label="⭐ Quinteto Ideal (x5)", value="x5"),
+            discord.SelectOption(label="👑 Winner Team", value="winner_team"),
+            discord.SelectOption(label="🎯 Premio Puskas", value="puskas")
         ]
-        super().__init__(
-            placeholder="Elige una categoría de premio para ver clips...",
-            min_values=1,
-            max_values=1,
-            options=options,
-            custom_id="categoria_premios_select_v2"
-        )
+        super().__init__(placeholder="Elige una categoría de premio...", min_values=1, max_values=1, options=options)
 
     async def callback(self, interaction: discord.Interaction):
-        await interaction.response.defer(ephemeral=False)
-        categoria = self.values[0]
-        canal_id = CANALES_PREMIOS.get(categoria)
-        
+        await interaction.response.defer()
+        canal_id = CANALES_PREMIOS.get(self.values[0])
         canal = interaction.guild.get_channel(canal_id)
         if not canal:
-            await interaction.followup.send("❌ El canal asignado para este premio no se encuentra disponible.", ephemeral=False)
+            await interaction.followup.send("❌ Canal no encontrado.", ephemeral=True)
             return
 
         ultimo_clip = None
-        
         async for mensaje in canal.history(limit=100):
             if mensaje.attachments or "http" in mensaje.content:
                 miembro = interaction.guild.get_member(mensaje.author.id)
-                if not miembro:
-                    if self.temporada == "playoffs":
-                        ultimo_clip = mensaje
-                        break
-                    continue
-
-                # Rastrear los nombres según los nuevos roles actualizados por el asistente
-                tiene_rol_first_season = any("First Season" in r.name for r in miembro.roles)
-                tiene_rol_playoffs = any("PlayOffs" in r.name or "Playoffs" in r.name for r in miembro.roles)
+                if not miembro: continue
                 
-                # Si no tiene ningún rol de temporada actual, va directo a la carpeta de Playoffs (clips viejos)
-                if not tiene_rol_first_season and not tiene_rol_playoffs:
-                    if self.temporada == "playoffs":
-                        ultimo_clip = mensaje
-                        break
-                    continue
+                tiene_first = any("First Season" in r.name for r in miembro.roles)
+                tiene_playoffs = any("PlayOffs" in r.name or "Playoffs" in r.name for r in miembro.roles)
 
-                # Clasificación inteligente basada en la carpeta seleccionada
-                if self.temporada == "playoffs" and tiene_rol_playoffs:
+                if self.temporada == "playoffs" and (tiene_playoffs or (not tiene_first and not tiene_playoffs)):
                     ultimo_clip = mensaje
                     break
-                elif self.temporada == "first_season" and tiene_rol_first_season:
+                elif self.temporada == "first_season" and tiene_first:
                     ultimo_clip = mensaje
                     break
 
         if not ultimo_clip:
-            temp_name = "Playoffs" if self.temporada == "playoffs" else "First Season"
-            await interaction.followup.send(f"📂 No se encontraron clips recientes en {canal.mention} que pertenezcan a la carpeta **{temp_name}**.", ephemeral=False)
+            await interaction.followup.send("📂 No se encontraron clips recientes en esta categoría.", ephemeral=True)
             return
 
         files = []
@@ -139,485 +502,34 @@ class CategoriaPremiosSelect(discord.ui.Select):
                 await att.save(fp)
                 fp.seek(0)
                 files.append(discord.File(fp, filename=att.filename))
-            except Exception:
-                pass
+            except Exception: pass
 
-        temp_label = "Playoffs" if self.temporada == "playoffs" else "First Season"
-        contenido = f"🎬 **[{temp_label}] Aporte destacado en** {canal.mention} (por {ultimo_clip.author.mention}):\n"
-        if ultimo_clip.content:
-            contenido += f"\n{ultimo_clip.content}"
-
-        if files:
-            await interaction.followup.send(content=contenido, files=files, ephemeral=False)
-        else:
-            await interaction.followup.send(content=contenido, ephemeral=False)
+        contenido = f"🎬 **Aporte destacado en** {canal.mention} (por {ultimo_clip.author.mention}):\n{ultimo_clip.content}"
+        await interaction.followup.send(content=contenido, files=files if files else None)
 
 class TemporadaPremiosSelect(discord.ui.Select):
     def __init__(self):
         options = [
-            discord.SelectOption(label="📁 First Season", value="first_season", description="Ver clips de la Temporada Regular", emoji="📝"),
-            discord.SelectOption(label="📁 Playoffs", value="playoffs", description="Ver clips de las Eliminatorias Directas", emoji="🔥")
+            discord.SelectOption(label="📁 First Season", value="first_season", emoji="📝"),
+            discord.SelectOption(label="📁 Playoffs", value="playoffs", emoji="🔥")
         ]
-        super().__init__(
-            placeholder="Selecciona una carpeta / temporada...",
-            min_values=1,
-            max_values=1,
-            options=options,
-            custom_id="temporada_premios_select_v2"
-        )
+        super().__init__(placeholder="Selecciona una temporada...", min_values=1, max_values=1, options=options)
 
     async def callback(self, interaction: discord.Interaction):
-        temporada_elegida = self.values[0]
-        temp_label = "First Season" if temporada_elegida == "first_season" else "Playoffs"
-        
         nueva_vista = discord.ui.View(timeout=None)
-        nueva_vista.add_item(CategoriaPremiosSelect(temporada_elegida))
-        
-        emb_actualizado = discord.Embed(
-            title="🏆 Galería de Carpetas y Premios Especiales",
-            description=f"Has abierto la carpeta: **{temp_label}**.\nEl bot clasificará los clips buscando los roles específicos en los autores.\n\nSelecciona la categoría abajo:",
-            color=0x378ADD
-        )
-        await interaction.response.edit_message(embed=emb_actualizado, view=nueva_vista)
+        nueva_vista.add_item(CategoriaPremiosSelect(self.values[0]))
+        emb = embed_info("🏆 Galería de Premios", f"Carpeta seleccionada: **{self.values[0].replace('_', ' ').title()}**.\nElige una categoría abajo:")
+        await interaction.response.edit_message(embed=emb, view=nueva_vista)
 
 class PremiosView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
         self.add_item(TemporadaPremiosSelect())
 
-@tree.command(name="premios", description="Muestra el menú para consultar los mejores clips filtrados por temporadas")
+@tree.command(name="premios", description="Consulta los mejores clips guardados por temporadas")
 async def premios(interaction: discord.Interaction):
-    emb = embed_info(
-        "🏆 Galería de Carpetas y Premios Especiales", 
-        "Selecciona primero una **carpeta o temporada** en el menú desplegable de abajo para ver sus categorías correspondientes."
-    )
-    await interaction.response.send_message(embed=emb, view=PremiosView(), ephemeral=False)
-
-# ══════════════════════════════════════════════════════════════
-#  EQUIPOS
-# ══════════════════════════════════════════════════════════════
-
-@tree.command(name="registrar", description="Regístrate como DT eligiendo el rol de tu equipo")
-@app_commands.describe(rol="El rol de tu equipo en el servidor")
-async def registrar(interaction: discord.Interaction, rol: discord.Role):
-    if await get_equipo_by_discord(str(interaction.user.id)):
-        await interaction.response.send_message(embed=embed_error("Ya tienes equipo registrado."), ephemeral=True); return
-    if await get_equipo_by_rol(str(rol.id)):
-        await interaction.response.send_message(embed=embed_error(f"**{rol.name}** ya está registrado."), ephemeral=True); return
-    await crear_equipo(str(interaction.user.id), rol.name, interaction.user.display_name, str(rol.id))
-    try: await interaction.user.add_roles(rol)
-    except Exception: pass
-    emb = embed_ok("⚽ ¡Equipo registrado!", f"**{rol.name}** inscrito en la liga.\nDT: {interaction.user.mention} {rol.mention}\n💰 Presupuesto: **{fmt(50_000_000)}**\n\nUsa `/inscribir_jugador` para añadir jugadores.")
-    await interaction.response.send_message(embed=emb)
-
-@tree.command(name="mi_equipo", description="Muestra tu equipo, plantilla, sueldos y valores")
-async def mi_equipo(interaction: discord.Interaction):
-    equipo = await get_equipo_by_discord(str(interaction.user.id))
-    if not equipo:
-        await interaction.response.send_message(embed=embed_error("No tienes equipo. Usa `/registrar`."), ephemeral=True); return
-    jugadores = await get_plantilla(equipo["id"])
-    emb = embed_info(f"🏟️ {equipo['nombre']}", f"DT: **{equipo['dt_nombre']}**")
-    gasto = sum((j["sueldo"] or 0) for j in jugadores)
-    valor_total = sum((j["valor"] or 0) for j in jugadores)
-    emb.add_field(name="💰 Presupuesto", value=fmt(equipo["presupuesto"]), inline=True)
-    emb.add_field(name="💸 Gasto semanal", value=fmt(gasto), inline=True)
-    emb.add_field(name="📈 Valor plantilla", value=fmt(valor_total), inline=True)
-    stats = (f"**PJ:** {equipo['pj']} | **PG:** {equipo['pg']} | **PE:** {equipo['pe']} | **PP:** {equipo['pp']}\n"
-             f"**GF:** {equipo['gf']} | **GC:** {equipo['gc']} | **DG:** {equipo['gf']-equipo['gc']} | **Pts:** {equipo['puntos']}")
-    emb.add_field(name="📊 Estadísticas", value=stats, inline=False)
-    if jugadores:
-        por_pos = {}
-        for j in jugadores:
-            s = fmt(j["sueldo"]) if j["sueldo"] else "—"
-            v = fmt(j["valor"]) if j["valor"] else "Libre"
-            por_pos.setdefault(j["posicion"],[]).append(f"`{j['dorsal']}` **{j['nombre']}** · Sueldo: {s} · Valor: {v}")
-        for pos, lista in por_pos.items():
-            emb.add_field(name=pos, value="\n".join(lista), inline=False)
-    else:
-        emb.add_field(name="Plantilla", value="Sin jugadores. Usa `/inscribir_jugador`.", inline=False)
-    await interaction.response.send_message(embed=emb)
-
-@tree.command(name="ver_equipo", description="Ver el equipo de otro DT")
-@app_commands.describe(nombre="Nombre del equipo")
-async def ver_equipo(interaction: discord.Interaction, nombre: str):
-    equipo = await get_equipo_by_nombre(nombre)
-    if not equipo:
-        await interaction.response.send_message(embed=embed_error(f"No existe **{nombre}**."), ephemeral=True); return
-    jugadores = await get_plantilla(equipo["id"])
-    emb = embed_info(f"🏟️ {equipo['nombre']}", f"DT: **{equipo['dt_nombre']}**")
-    stats = (f"**Pts:** {equipo['puntos']} | **PJ:** {equipo['pj']} | **PG:** {equipo['pg']} | **PE:** {equipo['pe']} | **PP:** {equipo['pp']}\n"
-             f"**GF:** {equipo['gf']} | **GC:** {equipo['gc']} | **DG:** {equipo['gf']-equipo['gc']}")
-    emb.add_field(name="📊 Estadísticas", value=stats, inline=False)
-    if jugadores:
-        por_pos = {}
-        for j in jugadores:
-            por_pos.setdefault(j["posicion"],[]).append(f"`{j['dorsal']}` {j['nombre']}")
-        for pos, lista in por_pos.items():
-            emb.add_field(name=pos, value="\n".join(lista), inline=True)
-    else:
-        emb.add_field(name="Plantilla", value="Sin jugadores.", inline=False)
-    await interaction.response.send_message(embed=emb)
-
-# ══════════════════════════════════════════════════════════════
-#  JUGADORES Y CONTRATOS
-# ══════════════════════════════════════════════════════════════
-
-class ContratoView(discord.ui.View):
-    def __init__(self, jugador_id, equipo, nombre, posicion, dorsal, sueldo, rol):
-        super().__init__(timeout=86400)
-        self.jugador_id = jugador_id
-        self.equipo = equipo
-        self.nombre = nombre
-        self.posicion = posicion
-        self.dorsal = dorsal
-        self.sueldo = sueldo
-        self.rol = rol
-
-    @discord.ui.button(label="✅ Aceptar contrato", style=discord.ButtonStyle.success)
-    async def aceptar(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await activar_contrato(self.jugador_id, self.sueldo)
-        guild = interaction.guild
-        if guild:
-            member = guild.get_member(interaction.user.id)
-            if member:
-                if self.equipo["rol_id"]:
-                    try:
-                        rol = guild.get_role(int(self.equipo["rol_id"]))
-                        if rol: await member.add_roles(rol)
-                    except Exception: pass
-                try:
-                    rol_libre = discord.utils.get(guild.roles, name="👤 | Agente Libre")
-                    if rol_libre and rol_libre in member.roles:
-                        await member.remove_roles(rol_libre)
-                except Exception: pass
-        emb = embed_ok("✅ ¡Contrato aceptado!", f"Bienvenido a **{self.equipo['nombre']}**, **{self.nombre}**!\nDorsal: #{self.dorsal} · {self.posicion}\n💰 Sueldo semanal: **{fmt(self.sueldo)}**")
-        self.stop()
-        for item in self.children: item.disabled = True
-        await interaction.response.edit_message(embed=emb, view=self)
-        if guild:
-            canal_fichajes = discord.utils.get(guild.text_channels, name="✅・fichajes")
-            if canal_fichajes:
-                emb_pub = embed_ok(
-                    "📋 Nuevo jugador inscrito",
-                    f"**{self.nombre}** ({self.posicion}) · Dorsal #{self.dorsal}\n"
-                    f"Se une a **{self.equipo['nombre']}**\n"
-                    f"💰 Sueldo semanal: **{fmt(self.sueldo)}**"
-                )
-                await canal_fichajes.send(embed=emb_pub)
-
-    @discord.ui.button(label="❌ Rechazar contrato", style=discord.ButtonStyle.danger)
-    async def rechazar(self, interaction: discord.Interaction, button: discord.ui.Button):
-        async with aiosqlite.connect(DB_PATH) as db:
-            await db.execute("DELETE FROM jugadores WHERE id=?", (self.jugador_id,))
-            await db.commit()
-        emb = embed_error(f"**{self.nombre}** rechazó el contrato con **{self.equipo['nombre']}**.")
-        self.stop()
-        for item in self.children: item.disabled = True
-        await interaction.response.edit_message(embed=emb, view=self)
-        guild = interaction.guild
-        if guild and self.equipo["discord_id"]:
-            try:
-                dt = guild.get_member(int(self.equipo["discord_id"]))
-                if dt:
-                    await dt.send(embed=embed_error(f"**{self.nombre}** rechazó tu oferta de contrato."))
-            except Exception: pass
-
-@tree.command(name="inscribir_jugador", description="Propone contrato a un jugador")
-@app_commands.describe(jugador="Usuario de Discord del jugador", posicion="Posición", dorsal="Número de camiseta", sueldo="Sueldo semanal en dólares")
-@app_commands.choices(posicion=[
-    app_commands.Choice(name="Portero (POR)", value="POR"),
-    app_commands.Choice(name="Defensa (DEF)", value="DEF"),
-    app_commands.Choice(name="Mediocampista (MED)", value="MED"),
-    app_commands.Choice(name="Delantero (DEL)", value="DEL"),
-])
-async def inscribir_jugador_cmd(interaction: discord.Interaction, jugador: discord.Member, posicion: str, dorsal: int, sueldo: int):
-    equipo, _ = await get_equipo_dt_o_sub(str(interaction.user.id))
-    if not equipo:
-        await interaction.response.send_message(embed=embed_error("No tienes equipo."), ephemeral=True); return
-    if sueldo < 0:
-        await interaction.response.send_message(embed=embed_error("El sueldo no puede ser negativo."), ephemeral=True); return
-    plantilla = await get_plantilla(equipo["id"])
-    if any(j["dorsal"] == dorsal for j in plantilla):
-        await interaction.response.send_message(embed=embed_error(f"El dorsal **{dorsal}** ya está ocupado."), ephemeral=True); return
-    if len(plantilla) >= 25:
-        await interaction.response.send_message(embed=embed_error("Ya tienes 25 jugadores."), ephemeral=True); return
-    await inscribir_jugador(jugador.display_name, posicion, equipo["id"], dorsal, str(jugador.id))
-    jug = await get_jugador_by_nombre(jugador.display_name)
-    rol = interaction.guild.get_role(int(equipo["rol_id"])) if equipo["rol_id"] else None
-    emb_oferta = discord.Embed(
-        title="📋 Oferta de contrato",
-        description=(f"**{equipo['nombre']}** te ofrece un contrato:\n\n"
-                     f"👕 Dorsal: **#{dorsal}**\n🏃 Posición: **{posicion}**\n💰 Sueldo semanal: **{fmt(sueldo)}**\n\n¿Aceptas?"),
-        color=COLOR_AMARILLO
-    )
-    view = ContratoView(jug["id"], equipo, jugador.display_name, posicion, dorsal, sueldo, rol)
-    try:
-        await jugador.send(embed=emb_oferta, view=view)
-        await interaction.response.send_message(embed=embed_info("📨 Oferta enviada", f"Se envió la oferta a {jugador.mention}. Espera su respuesta."), ephemeral=True)
-    except Exception:
-        await interaction.response.send_message(embed=emb_oferta, view=view)
-
-@tree.command(name="liberar_jugador", description="Libera un jugador al mercado libre")
-@app_commands.describe(nombre="Nombre del jugador")
-async def liberar_jugador_cmd(interaction: discord.Interaction, nombre: str):
-    equipo, _ = await get_equipo_dt_o_sub(str(interaction.user.id))
-    if not equipo:
-        await interaction.response.send_message(embed=embed_error("No tienes equipo."), ephemeral=True); return
-    jugador = await get_jugador_by_nombre(nombre)
-    if not jugador or jugador["equipo_id"] != equipo["id"]:
-        await interaction.response.send_message(embed=embed_error(f"No tienes ningún jugador llamado **{nombre}**."), ephemeral=True); return
-    await liberar_jugador(jugador["id"])
-    if equipo["rol_id"] and jugador["discord_id"]:
-        try:
-            member = interaction.guild.get_member(int(jugador["discord_id"])) if jugador["discord_id"] else None
-            rol = interaction.guild.get_role(int(equipo["rol_id"]))
-            if member and rol:
-                await member.remove_roles(rol)
-        except Exception: pass
-    emb = embed_ok("🔓 Jugador liberado", f"**{nombre}** ahora está en el mercado libre.")
-    await interaction.response.send_message(embed=emb)
-
-@tree.command(name="fichar", description="Ficha un jugador libre del mercado")
-@app_commands.describe(nombre="Nombre del jugador", dorsal="Dorsal que le asignarás")
-async def fichar_cmd(interaction: discord.Interaction, nombre: str, dorsal: int):
-    equipo, _ = await get_equipo_dt_o_sub(str(interaction.user.id))
-    if not equipo:
-        await interaction.response.send_message(embed=embed_error("No tienes equipo."), ephemeral=True); return
-    jugador = await get_jugador_by_nombre(nombre)
-    if not jugador or (jugador["equipo_id"] is not None and jugador["libre"] == 0):
-        await interaction.response.send_message(embed=embed_error(f"**{nombre}** no está en el mercado."), ephemeral=True); return
-    plantilla = await get_plantilla(equipo["id"])
-    if any(j["dorsal"] == dorsal for j in plantilla):
-        await interaction.response.send_message(embed=embed_error(f"El dorsal **{dorsal}** ya está ocupado."), ephemeral=True); return
-    await fichar_jugador(jugador["id"], equipo["id"])
-    async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute("UPDATE jugadores SET dorsal=? WHERE id=?", (dorsal, jugador["id"]))
-        await db.commit()
-
-    if jugador["discord_id"]:
-        try:
-            member = interaction.guild.get_member(int(jugador["discord_id"])) if jugador["discord_id"] else None
-            if member:
-                if equipo["rol_id"]:
-                    rol_equipo = interaction.guild.get_role(int(equipo["rol_id"])) if equipo["rol_id"] else None
-                    if rol_equipo:
-                        await member.add_roles(rol_equipo)
-                rol_libre = discord.utils.get(interaction.guild.roles, name="👤 | Agente Libre")
-                if rol_libre and rol_libre in member.roles:
-                    await member.remove_roles(rol_libre)
-        except Exception: pass
-
-    emb = embed_ok("🤝 ¡Fichaje completado!", f"**{nombre}** ({jugador['posicion']}) llega a **{equipo['nombre']}** con el dorsal #{dorsal}.")
-    await interaction.response.send_message(embed=emb)
-
-    canal_fich = discord.utils.get(interaction.guild.text_channels, name="✅・fichajes")
-    if canal_fich:
-        pos = jugador["posicion"]
-        eq_nom = equipo["nombre"]
-        emb_f = embed_ok("✅ Nuevo fichaje", f"**{nombre}** ({pos}) · Dorsal #{dorsal}\nEquipo: **{eq_nom}**")
-        await canal_fich.send(embed=emb_f)
-
-@tree.command(name="mercado", description="Muestra los jugadores libres disponibles")
-async def mercado(interaction: discord.Interaction):
-    emb = embed_info("🏪 Mercado libre")
-    libres_bd = await get_jugadores_libres()
-    if libres_bd:
-        por_pos = {}
-        for j in libres_bd:
-            por_pos.setdefault(j["posicion"],[]).append(f"• {j['nombre']}")
-        for pos, lista in por_pos.items():
-            emb.add_field(name=f"Registrados — {pos}", value="\n".join(lista[:8]), inline=True)
-
-    rol_libre = discord.utils.get(interaction.guild.roles, name="👤 | Agente Libre")
-    if rol_libre and rol_libre.members:
-        agentes = [m.display_name for m in rol_libre.members if not m.bot]
-        if agentes:
-            chunk = agentes[:25]
-            emb.add_field(name=f"👥 Agentes libres ({len(agentes)})", value="\n".join(f"• {n}" for n in chunk), inline=False)
-            if len(agentes) > 25:
-                emb.set_footer(text=f"... y {len(agentes)-25} más")
-
-    if not libres_bd and (not rol_libre or not [m for m in rol_libre.members if not m.bot]):
-        emb.description = "No hay jugadores disponibles."
-
-    await interaction.response.send_message(embed=emb)
-
-# ══════════════════════════════════════════════════════════════
-#  FICHAJES CON DINERO
-# ══════════════════════════════════════════════════════════════
-
-@tree.command(name="ofertar", description="Haz una oferta económica por un jugador rival")
-@app_commands.describe(equipo_rival="Rol del equipo rival", jugador="Nombre del jugador", monto="Cantidad en dólares")
-async def ofertar(interaction: discord.Interaction, equipo_rival: discord.Role, jugador: str, monto: int):
-    equipo_comprador, _ = await get_equipo_dt_o_sub(str(interaction.user.id))
-    if not equipo_comprador:
-        await interaction.response.send_message(embed=embed_error("No tienes equipo."), ephemeral=True); return
-    if monto <= 0:
-        await interaction.response.send_message(embed=embed_error("El monto debe ser mayor a $0."), ephemeral=True); return
-    if equipo_comprador["presupuesto"] < monto:
-        await interaction.response.send_message(embed=embed_error(f"No tienes suficiente presupuesto.\nDisponible: **{fmt(equipo_comprador['presupuesto'])}**"), ephemeral=True); return
-    equipo_vendedor = await get_equipo_by_rol(str(equipo_rival.id))
-    if not equipo_vendedor:
-        await interaction.response.send_message(embed=embed_error(f"**{equipo_rival.name}** no está en la liga."), ephemeral=True); return
-    if equipo_comprador["id"] == equipo_vendedor["id"]:
-        await interaction.response.send_message(embed=embed_error("No puedes hacerte una oferta a ti mismo."), ephemeral=True); return
-    jug = await get_jugador_by_nombre(jugador)
-    if not jug or jug["equipo_id"] != equipo_vendedor["id"]:
-        await interaction.response.send_message(embed=embed_error(f"**{equipo_rival.name}** no tiene a **{jugador}**."), ephemeral=True); return
-    oferta_id = await crear_oferta(jug["id"], equipo_comprador["id"], equipo_vendedor["id"], monto)
-    emb = embed_ok("💸 Oferta enviada", f"**{equipo_comprador['nombre']}** ofrece **{fmt(monto)}** por **{jugador}** ({jug['posicion']})\nAl equipo: **{equipo_vendedor['nombre']}**\nID: `{oferta_id}`")
-    await interaction.response.send_message(embed=emb)
-    dt_rival = interaction.guild.get_member(int(equipo_vendedor["discord_id"])) if equipo_vendedor["discord_id"] else None
-    if dt_rival:
-        try:
-            notif = discord.Embed(title="📨 ¡Tienes una oferta!", description=f"**{equipo_comprador['nombre']}** ofrece **{fmt(monto)}** por **{jugador}** ({jug['posicion']})\n\nUsa `/mis_ofertas` para verla.", color=COLOR_AMARILLO)
-            await dt_rival.send(embed=notif)
-        except Exception: pass
-
-@tree.command(name="mis_ofertas", description="Ver las ofertas pendientes para tu equipo")
-async def mis_ofertas(interaction: discord.Interaction):
-    equipo = await get_equipo_by_discord(str(interaction.user.id))
-    if not equipo:
-        await interaction.response.send_message(embed=embed_error("No tienes equipo."), ephemeral=True); return
-    ofertas = await get_ofertas_pendientes(equipo["id"])
-    if not ofertas:
-        await interaction.response.send_message(embed=embed_info("📨 Ofertas pendientes", "No tienes ofertas pendientes."), ephemeral=True); return
-    emb = embed_info("📨 Ofertas pendientes", f"Tienes **{len(ofertas)}** oferta(s):")
-    for o in ofertas:
-        jug = await get_jugador_by_id(o["jugador_id"])
-        eq = await get_equipo_by_id(o["equipo_comprador_id"])
-        emb.add_field(name=f"Oferta ID: {o['id']}", value=f"**{eq['nombre']}** ofrece **{fmt(o['monto'])}** por **{jug['nombre']}** ({jug['posicion']})\n✅ `/aceptar_oferta id:{o['id']}` · ❌ `/rechazar_oferta id:{o['id']}`", inline=False)
-    await interaction.response.send_message(embed=emb, ephemeral=True)
-
-@tree.command(name="aceptar_oferta", description="Acepta una oferta de fichaje")
-@app_commands.describe(id="ID de la oferta")
-async def aceptar_oferta_cmd(interaction: discord.Interaction, id: int):
-    equipo = await get_equipo_by_discord(str(interaction.user.id))
-    if not equipo:
-        await interaction.response.send_message(embed=embed_error("No tienes equipo."), ephemeral=True); return
-    oferta = await get_oferta(id)
-    if not oferta or oferta["equipo_vendedor_id"] != equipo["id"] or oferta["estado"] != "pendiente":
-        await interaction.response.send_message(embed=embed_error("Oferta no válida o ya respondida."), ephemeral=True); return
-    await aceptar_oferta(id)
-    jug = await get_jugador_by_id(oferta["jugador_id"])
-    eq_c = await get_equipo_by_id(oferta["equipo_comprador_id"])
-    eq_v = await get_equipo_by_id(oferta["equipo_vendedor_id"])
-    
-    if jug["discord_id"]:
-        try:
-            member = interaction.guild.get_member(int(jug["discord_id"])) if jug["discord_id"] else None
-            if member:
-                if eq_v["rol_id"]:
-                    rol_v = interaction.guild.get_role(int(eq_v["rol_id"])) if eq_v["rol_id"] else None
-                    if rol_v: await member.remove_roles(rol_v)
-                if eq_c["rol_id"]:
-                    rol_c = interaction.guild.get_role(int(eq_c["rol_id"])) if eq_c["rol_id"] else None
-                    if rol_c: await member.add_roles(rol_c)
-        except Exception: pass
-        
-    try:
-        from generar_imagen import generar_fichaje
-        buf = generar_fichaje(jug["nombre"], jug["posicion"], jug["dorsal"] or 0, eq_v["nombre"], eq_c["nombre"], oferta["monto"])
-        file = discord.File(buf, filename="fichaje.png")
-        emb = embed_ok("✅ ¡Transferencia completada!", f"**{jug['nombre']}** → **{eq_c['nombre']}**\n💰 **{fmt(oferta['monto'])}**")
-        emb.set_image(url="attachment://fichaje.png")
-        await interaction.response.send_message(embed=emb, file=file)
-
-        if interaction.guild:
-            canal_fichajes = discord.utils.get(interaction.guild.text_channels, name="✅・fichajes")
-            if canal_fichajes:
-                from generar_imagen import generar_fichaje as gf2
-                buf2 = gf2(jug["nombre"], jug["posicion"], jug["dorsal"] or 0, eq_v["nombre"], eq_c["nombre"], oferta["monto"])
-                file2 = discord.File(buf2, filename="fichaje.png")
-                emb2 = embed_ok("⚽ ¡Fichaje oficial!", f"**{jug['nombre']}** ({jug['posicion']}) se une a **{eq_c['nombre']}**\n💰 Traspaso: **{fmt(oferta['monto'])}**")
-                emb2.set_image(url="attachment://fichaje.png")
-                await canal_fichajes.send(embed=emb2, file=file2)
-    except Exception:
-        emb = embed_ok("✅ ¡Transferencia completada!", f"**{jug['nombre']}** → **{eq_c['nombre']}**\n💰 **{fmt(oferta['monto'])}**")
-        await interaction.response.send_message(embed=emb)
-        if interaction.guild:
-            canal_fichajes = discord.utils.get(interaction.guild.text_channels, name="✅・fichajes")
-            if canal_fichajes:
-                emb2 = embed_ok("⚽ ¡Fichaje oficial!", f"**{jug['nombre']}** ({jug['posicion']}) se une a **{eq_c['nombre']}**\n💰 Traspaso: **{fmt(oferta['monto'])}**")
-                await canal_fichajes.send(embed=emb2)
-                
-    dt_c = interaction.guild.get_member(int(eq_c["discord_id"])) if eq_c["discord_id"] else None
-    if dt_c:
-        try: await dt_c.send(embed=embed_ok("🎉 ¡Oferta aceptada!", f"**{eq_v['nombre']}** aceptó tu oferta.\n**{jug['nombre']}** ya es tuyo."))
-        except Exception: pass
-
-@tree.command(name="rechazar_oferta", description="Rechaza una oferta de fichaje")
-@app_commands.describe(id="ID de la oferta")
-async def rechazar_oferta_cmd(interaction: discord.Interaction, id: int):
-    equipo = await get_equipo_by_discord(str(interaction.user.id))
-    if not equipo:
-        await interaction.response.send_message(embed=embed_error("No tienes equipo."), ephemeral=True); return
-    oferta = await get_oferta(id)
-    if not oferta or oferta["equipo_vendedor_id"] != equipo["id"] or oferta["estado"] != "pendiente":
-        await interaction.response.send_message(embed=embed_error("Oferta no válida o ya respondida."), ephemeral=True); return
-    await rechazar_oferta(id)
-    jug = await get_jugador_by_id(oferta["jugador_id"])
-    eq_c = await get_equipo_by_id(oferta["equipo_comprador_id"])
-    await interaction.response.send_message(embed=embed_error(f"Oferta de **{eq_c['nombre']}** por **{jug['nombre']}** rechazada."))
-    dt_c = interaction.guild.get_member(int(eq_c["discord_id"])) if eq_c["discord_id"] else None
-    if dt_c:
-        try: await dt_c.send(embed=discord.Embed(title="❌ Oferta rechazada", description=f"**{equipo['nombre']}** rechazó tu oferta por **{jug['nombre']}**.", color=COLOR_ERROR))
-        except Exception: pass
-
-# ══════════════════════════════════════════════════════════════
-#  SUB DTS
-# ══════════════════════════════════════════════════════════════
-
-@tree.command(name="agregar_sub_dt", description="Agrega un sub DT a tu equipo")
-@app_commands.describe(usuario="Usuario que será sub DT")
-async def agregar_sub_dt_cmd(interaction: discord.Interaction, usuario: discord.Member):
-    equipo = await get_equipo_by_discord(str(interaction.user.id))
-    if not equipo:
-        await interaction.response.send_message(embed=embed_error("Solo el DT principal puede agregar sub DTs."), ephemeral=True); return
-    if usuario.id == interaction.user.id:
-        await interaction.response.send_message(embed=embed_error("No puedes agregarte a ti mismo."), ephemeral=True); return
-    otro = await get_equipo_by_discord(str(usuario.id))
-    if otro:
-        await interaction.response.send_message(embed=embed_error(f"**{usuario.display_name}** ya es DT de **{otro['nombre']}**."), ephemeral=True); return
-    subs = await get_sub_dts(equipo["id"])
-    if len(subs) >= 2:
-        await interaction.response.send_message(embed=embed_error("Ya tienes 2 sub DTs, ese es el máximo."), ephemeral=True); return
-    ok = await agregar_sub_dt(equipo["id"], str(usuario.id))
-    if not ok:
-        await interaction.response.send_message(embed=embed_error(f"**{usuario.display_name}** ya es sub DT."), ephemeral=True); return
-    emb = embed_ok("👥 Sub DT agregado", f"**{usuario.display_name}** ahora es sub DT de **{equipo['nombre']}**.\nPuede fichar, inscribir y liberar jugadores.")
-    await interaction.response.send_message(emb)
-
-@tree.command(name="quitar_sub_dt", description="Quita un sub DT de tu equipo")
-@app_commands.describe(usuario="Sub DT a quitar")
-async def quitar_sub_dt_cmd(interaction: discord.Interaction, usuario: discord.Member):
-    equipo = await get_equipo_by_discord(str(interaction.user.id))
-    if not equipo:
-        await interaction.response.send_message(embed=embed_error("Solo el DT principal puede quitar sub DTs."), ephemeral=True); return
-    await quitar_sub_dt(equipo["id"], str(usuario.id))
-    emb = embed_ok("👥 Sub DT eliminado", f"**{usuario.display_name}** ya no es sub DT de **{equipo['nombre']}**.")
-    await interaction.response.send_message(emb)
-
-# ══════════════════════════════════════════════════════════════
-#  LIGA
-# ══════════════════════════════════════════════════════════════
-
-@tree.command(name="tabla", description="Tabla de posiciones")
-async def tabla(interaction: discord.Interaction):
-    equipos = await get_todos_equipos()
-    if not equipos:
-        await interaction.response.send_message(embed=embed_info("📊 Tabla", "No hay equipos registrados.")); return
-    emb = embed_info("📊 Tabla de posiciones")
-
-    equipos.sort(key=lambda x: (x.get('puntos', 0), x.get('dg', 0)), reverse=True)
-    
-    descripcion = ""
-    for i, eq in enumerate(equipos, 1):
-        descripcion += f"**{i}. {eq['nombre']}** - {eq.get('puntos', 0)} pts (PJ: {eq.get('pj', 0)} | DG: {eq.get('dg', 0)})\n"
-        
-    emb.description = descripcion
-    await interaction.response.send_message(embed=emb)
+    emb = embed_info("🏆 Galería de Carpetas y Premios", "Selecciona una carpeta o temporada abajo para ver los clips.")
+    await interaction.response.send_message(embed=emb, view=PremiosView())
 
 if __name__ == "__main__":
-    if not bot.is_ready():
-        bot.run(TOKEN)
+    bot.run(TOKEN)
