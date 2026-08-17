@@ -104,7 +104,8 @@ def home():
     return "Bot de Discord activo 24/7"
 
 def run_web():
-    app.run(host='0.0.0.0', port=10000)
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host='0.0.0.0', port=port)
 
 def keep_alive():
     t = Thread(target=run_web)
@@ -149,6 +150,7 @@ class TicketSelect(discord.ui.Select):
         )
 
     async def callback(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
         categoria = self.values[0]
         guild = interaction.guild
         user = interaction.user
@@ -156,7 +158,7 @@ class TicketSelect(discord.ui.Select):
         channel_name = f"ticket-{categoria}-{user.name.lower()}"
         existing_channel = discord.utils.get(guild.channels, name=channel_name)
         if existing_channel:
-            await interaction.response.send_message(f"❌ Ya tienes un ticket abierto de este tipo en {existing_channel.mention}", ephemeral=True)
+            await interaction.followup.send(f"❌ Ya tienes un ticket abierto de este tipo en {existing_channel.mention}", ephemeral=True)
             return
 
         overwrites = {
@@ -183,7 +185,7 @@ class TicketSelect(discord.ui.Select):
         )
 
         await ticket_channel.send(content=f"{user.mention}", embed=embed, view=TicketCloseView())
-        await interaction.response.send_message(f"✅ Ticket creado correctamente: {ticket_channel.mention}", ephemeral=True)
+        await interaction.followup.send(f"✅ Ticket creado correctamente: {ticket_channel.mention}", ephemeral=True)
 
 
 class TicketLaunchView(discord.ui.View):
@@ -199,6 +201,7 @@ class FixtureSelect(discord.ui.Select):
         super().__init__(placeholder="Elige un equipo para ver sus partidos...", options=options)
 
     async def callback(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
         equipo_id = int(self.values[0])
         conn = sqlite3.connect(DB_NAME)
         cursor = conn.cursor()
@@ -218,7 +221,7 @@ class FixtureSelect(discord.ui.Select):
         conn.close()
 
         if not partidos:
-            await interaction.response.send_message(f"No hay partidos registrados para {equipo_nombre}.", ephemeral=True)
+            await interaction.followup.send(f"No hay partidos registrados para {equipo_nombre}.", ephemeral=True)
             return
 
         embed = discord.Embed(title=f"📅 Fixture: {equipo_nombre}", color=discord.Color.blue())
@@ -226,64 +229,13 @@ class FixtureSelect(discord.ui.Select):
             estado = f"✅ {g_loc} - {g_vis}" if jugado else "⏳ Pendiente"
             embed.add_field(name=f"{local} vs {visitante}", value=f"Estado: {estado}", inline=False)
 
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+        await interaction.followup.send(embed=embed, ephemeral=True)
 
 
 class FixtureView(discord.ui.View):
     def __init__(self, equipos):
         super().__init__()
         self.add_item(FixtureSelect(equipos))
-
-
-class PremiosCategoriaSelect(discord.ui.Select):
-    def __init__(self, temporada):
-        self.temporada = temporada
-        options = [
-            discord.SelectOption(label="Golden Boot", emoji="⚽"),
-            discord.SelectOption(label="Playmaker", emoji="🎯"),
-            discord.SelectOption(label="Quinteto Ideal", emoji="⭐"),
-            discord.SelectOption(label="Winner Team", emoji="🏆"),
-            discord.SelectOption(label="Puskas", emoji="🚀")
-        ]
-        super().__init__(placeholder="Selecciona una categoría...", options=options)
-
-    async def callback(self, interaction: discord.Interaction):
-        categoria = self.values[0]
-        video_filename = f"{self.temporada}_{categoria.lower().replace(' ', '_')}.mp4"
-        
-        if os.path.exists(video_filename):
-            file = discord.File(video_filename)
-            await interaction.response.send_message(
-                content=f"🎬 **Premio:** {categoria} - **{self.temporada}**",
-                file=file,
-                ephemeral=True
-            )
-        else:
-            await interaction.response.send_message(
-                content=f"🏆 **{categoria}** ({self.temporada}): *Contenido no disponible por el momento.*",
-                ephemeral=True
-            )
-
-
-class PremiosTemporadaSelect(discord.ui.Select):
-    def __init__(self):
-        options = [
-            discord.SelectOption(label="First Season", value="First Season"),
-            discord.SelectOption(label="Playoffs", value="Playoffs")
-        ]
-        super().__init__(placeholder="Selecciona una Temporada...", options=options)
-
-    async def callback(self, interaction: discord.Interaction):
-        temporada_elegida = self.values[0]
-        view = discord.ui.View()
-        view.add_item(PremiosCategoriaSelect(temporada_elegida))
-        await interaction.response.send_message(f"Has elegido **{temporada_elegida}**. Ahora selecciona la categoría:", view=view, ephemeral=True)
-
-
-class PremiosView(discord.ui.View):
-    def __init__(self):
-        super().__init__()
-        self.add_item(PremiosTemporadaSelect())
 
 
 # --- EVENTOS PRINCIPALES ---
@@ -354,27 +306,29 @@ class SeasonGroup(app_commands.Group):
     @app_commands.command(name="create", description="Crea una nueva temporada")
     @app_commands.checks.has_permissions(administrator=True)
     async def season_create(self, interaction: discord.Interaction, nombre: str):
+        await interaction.response.defer()
         conn = sqlite3.connect(DB_NAME)
         cursor = conn.cursor()
         try:
             cursor.execute("INSERT INTO temporadas (nombre, estado) VALUES (?, 'inscripcion')", (nombre,))
             conn.commit()
-            await interaction.response.send_message(f"🏆 Temporada **{nombre}** creada exitosamente en fase de inscripción.")
+            await interaction.followup.send(f"🏆 Temporada **{nombre}** creada exitosamente en fase de inscripción.")
         except sqlite3.IntegrityError:
-            await interaction.response.send_message(f"❌ Ya existe una temporada llamada **{nombre}**.", ephemeral=True)
+            await interaction.followup.send(f"❌ Ya existe una temporada llamada **{nombre}**.", ephemeral=True)
         finally:
             conn.close()
 
     @app_commands.command(name="start", description="Inicia oficialmente la temporada activa")
     @app_commands.checks.has_permissions(administrator=True)
     async def season_start(self, interaction: discord.Interaction):
+        await interaction.response.defer()
         conn = sqlite3.connect(DB_NAME)
         cursor = conn.cursor()
         cursor.execute("SELECT id, nombre FROM temporadas WHERE estado = 'inscripcion' ORDER BY id DESC LIMIT 1")
         temp = cursor.fetchone()
         
         if not temp:
-            await interaction.response.send_message("❌ No hay ninguna temporada en fase de inscripción para iniciar.", ephemeral=True)
+            await interaction.followup.send("❌ No hay ninguna temporada en fase de inscripción para iniciar.", ephemeral=True)
             conn.close()
             return
 
@@ -383,18 +337,19 @@ class SeasonGroup(app_commands.Group):
         conn.commit()
         conn.close()
 
-        await interaction.response.send_message(f"🚀 ¡La temporada **{temp[1]}** ha iniciado oficialmente! Ahora se pueden subir replays.")
+        await interaction.followup.send(f"🚀 ¡La temporada **{temp[1]}** ha iniciado oficialmente! Ahora se pueden subir replays.")
 
     @app_commands.command(name="close", description="Cierra la temporada activa")
     @app_commands.checks.has_permissions(administrator=True)
     async def season_close(self, interaction: discord.Interaction):
+        await interaction.response.defer()
         conn = sqlite3.connect(DB_NAME)
         cursor = conn.cursor()
         cursor.execute("SELECT id, nombre FROM temporadas WHERE estado = 'activa'")
         temp = cursor.fetchone()
 
         if not temp:
-            await interaction.response.send_message("❌ No hay ninguna temporada activa para cerrar.", ephemeral=True)
+            await interaction.followup.send("❌ No hay ninguna temporada activa para cerrar.", ephemeral=True)
             conn.close()
             return
 
@@ -402,10 +357,11 @@ class SeasonGroup(app_commands.Group):
         conn.commit()
         conn.close()
 
-        await interaction.response.send_message(f"🔒 La temporada **{temp[1]}** ha sido cerrada oficialmente.")
+        await interaction.followup.send(f"🔒 La temporada **{temp[1]}** ha sido cerrada oficialmente.")
 
     @app_commands.command(name="info", description="Muestra información de la temporada actual")
     async def season_info(self, interaction: discord.Interaction):
+        await interaction.response.defer()
         conn = sqlite3.connect(DB_NAME)
         cursor = conn.cursor()
         cursor.execute("SELECT nombre, estado FROM temporadas ORDER BY id DESC LIMIT 1")
@@ -413,12 +369,13 @@ class SeasonGroup(app_commands.Group):
         conn.close()
 
         if not temp:
-            await interaction.response.send_message("ℹ️ No hay temporadas registradas aún.", ephemeral=True)
+            await interaction.followup.send("ℹ️ No hay temporadas registradas aún.", ephemeral=True)
         else:
-            await interaction.response.send_message(f"ℹ️ Temporada actual: **{temp[0]}** | Estado: `{temp[1].upper()}`")
+            await interaction.followup.send(f"ℹ️ Temporada actual: **{temp[0]}** | Estado: `{temp[1].upper()}`")
 
     @app_commands.command(name="list", description="Lista todas las temporadas")
     async def season_list(self, interaction: discord.Interaction):
+        await interaction.response.defer()
         conn = sqlite3.connect(DB_NAME)
         cursor = conn.cursor()
         cursor.execute("SELECT id, nombre, estado FROM temporadas ORDER BY id DESC")
@@ -426,14 +383,14 @@ class SeasonGroup(app_commands.Group):
         conn.close()
 
         if not temporadas:
-            await interaction.response.send_message("ℹ️ No hay temporadas en la base de datos.", ephemeral=True)
+            await interaction.followup.send("ℹ️ No hay temporadas en la base de datos.", ephemeral=True)
             return
 
         embed = discord.Embed(title="📜 Historial de Temporadas", color=discord.Color.blue())
         for t_id, nombre, estado in temporadas:
             embed.add_field(name=f"#{t_id} {nombre}", value=f"Estado: `{estado}`", inline=False)
 
-        await interaction.response.send_message(embed=embed)
+        await interaction.followup.send(embed=embed)
 
 bot.tree.add_command(SeasonGroup())
 
@@ -442,6 +399,7 @@ bot.tree.add_command(SeasonGroup())
 @bot.tree.command(name="inscribir_equipo", description="Inscribe un equipo y crea su rol en Discord.")
 @app_commands.checks.has_permissions(administrator=True)
 async def inscribir_equipo(interaction: discord.Interaction, nombre_equipo: str, dt: discord.Member):
+    await interaction.response.defer()
     guild = interaction.guild
     rol = await guild.create_role(name=nombre_equipo, reason="Rol para equipo de Haxball")
     await dt.add_roles(rol)
@@ -451,22 +409,23 @@ async def inscribir_equipo(interaction: discord.Interaction, nombre_equipo: str,
     try:
         cursor.execute("INSERT INTO equipos (nombre, dt_id, rol_id) VALUES (?, ?, ?)", (nombre_equipo, dt.id, rol.id))
         conn.commit()
-        await interaction.response.send_message(f"✅ Equipo **{nombre_equipo}** inscrito correctamente. Rol creado y asignado a {dt.mention}.")
+        await interaction.followup.send(f"✅ Equipo **{nombre_equipo}** inscrito correctamente. Rol creado y asignado a {dt.mention}.")
     except sqlite3.IntegrityError:
-        await interaction.response.send_message(f"❌ El equipo **{nombre_equipo}** ya existe.", ephemeral=True)
+        await interaction.followup.send(f"❌ El equipo **{nombre_equipo}** ya existe.", ephemeral=True)
     finally:
         conn.close()
 
 @bot.tree.command(name="fichar_jugador", description="Asigna un jugador a un equipo y le da el rol.")
 @app_commands.checks.has_permissions(administrator=True)
 async def fichar_jugador(interaction: discord.Interaction, jugador: discord.Member, nombre_equipo: str):
+    await interaction.response.defer()
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
     cursor.execute("SELECT id, rol_id FROM equipos WHERE nombre = ?", (nombre_equipo,))
     equipo = cursor.fetchone()
 
     if not equipo:
-        await interaction.response.send_message(f"❌ El equipo **{nombre_equipo}** no existe.", ephemeral=True)
+        await interaction.followup.send(f"❌ El equipo **{nombre_equipo}** no existe.", ephemeral=True)
         conn.close()
         return
 
@@ -480,7 +439,7 @@ async def fichar_jugador(interaction: discord.Interaction, jugador: discord.Memb
     if rol:
         await jugador.add_roles(rol)
 
-    await interaction.response.send_message(f"📝 {jugador.mention} ha sido fichado por **{nombre_equipo}**.")
+    await interaction.followup.send(f"📝 {jugador.mention} ha sido fichado por **{nombre_equipo}**.")
 
 async def equipo_autocomplete(interaction: discord.Interaction, current: str):
     conn = sqlite3.connect(DB_NAME)
@@ -493,24 +452,24 @@ async def equipo_autocomplete(interaction: discord.Interaction, current: str):
 @bot.tree.command(name="replay", description="Procesa un archivo .hbr2 para registrar el partido.")
 @app_commands.autocomplete(local=equipo_autocomplete, visitante=equipo_autocomplete)
 async def replay(interaction: discord.Interaction, archivo: discord.Attachment, local: str, visitante: str):
+    await interaction.response.defer()
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
     cursor.execute("SELECT id FROM temporadas WHERE estado = 'activa'")
     temp_activa = cursor.fetchone()
 
     if not temp_activa:
-        await interaction.response.send_message("❌ No hay ninguna temporada activa para registrar partidos.", ephemeral=True)
+        await interaction.followup.send("❌ No hay ninguna temporada activa para registrar partidos.", ephemeral=True)
         conn.close()
         return
 
     temporada_id = temp_activa[0]
 
     if not archivo.filename.endswith(".hbr2"):
-        await interaction.response.send_message("❌ El archivo debe ser formato `.hbr2`.", ephemeral=True)
+        await interaction.followup.send("❌ El archivo debe ser formato `.hbr2`.", ephemeral=True)
         conn.close()
         return
 
-    await interaction.response.defer()
     file_path = f"temp_{archivo.filename}"
     await archivo.save(file_path)
 
@@ -581,6 +540,7 @@ async def replay(interaction: discord.Interaction, archivo: discord.Attachment, 
 
 @bot.tree.command(name="tabla", description="Muestra la tabla de posiciones.")
 async def tabla(interaction: discord.Interaction):
+    await interaction.response.defer()
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
     cursor.execute("SELECT id, nombre FROM equipos")
@@ -627,10 +587,11 @@ async def tabla(interaction: discord.Interaction):
 
     descripcion += "```"
     embed.description = descripcion
-    await interaction.response.send_message(embed=embed)
+    await interaction.followup.send(embed=embed)
 
 @bot.tree.command(name="goleadores", description="Muestra el top 10 de goleadores de la liga.")
 async def goleadores(interaction: discord.Interaction):
+    await interaction.response.defer()
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
     cursor.execute("SELECT discord_id, goles FROM jugadores WHERE goles > 0 ORDER BY goles DESC LIMIT 10")
@@ -638,7 +599,7 @@ async def goleadores(interaction: discord.Interaction):
     conn.close()
 
     if not top:
-        await interaction.response.send_message("Aún no hay goles registrados.", ephemeral=True)
+        await interaction.followup.send("Aún no hay goles registrados.", ephemeral=True)
         return
 
     embed = discord.Embed(title="🥇 Tabla de Goleadores", color=discord.Color.dark_gold())
@@ -650,19 +611,20 @@ async def goleadores(interaction: discord.Interaction):
         nombre = user.mention if user else f"Jugador ID: {p_id}"
         embed.add_field(name=f"{prefix} {goles} Goles", value=nombre, inline=False)
 
-    await interaction.response.send_message(embed=embed)
+    await interaction.followup.send(embed=embed)
 
 @bot.tree.command(name="crear_partido", description="Programa un partido de la liga.")
 @app_commands.checks.has_permissions(administrator=True)
 @app_commands.autocomplete(local=equipo_autocomplete, visitante=equipo_autocomplete)
 async def crear_partido(interaction: discord.Interaction, local: str, visitante: str):
+    await interaction.response.defer()
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
     cursor.execute("SELECT id FROM temporadas WHERE estado = 'activa'")
     temp_activa = cursor.fetchone()
 
     if not temp_activa:
-        await interaction.response.send_message("❌ No hay una temporada activa.", ephemeral=True)
+        await interaction.followup.send("❌ No hay una temporada activa.", ephemeral=True)
         conn.close()
         return
 
@@ -672,7 +634,7 @@ async def crear_partido(interaction: discord.Interaction, local: str, visitante:
     eq_vis = cursor.fetchone()
 
     if not eq_loc or not eq_vis:
-        await interaction.response.send_message("❌ Uno de los equipos no existe.", ephemeral=True)
+        await interaction.followup.send("❌ Uno de los equipos no existe.", ephemeral=True)
         conn.close()
         return
 
@@ -681,10 +643,11 @@ async def crear_partido(interaction: discord.Interaction, local: str, visitante:
     conn.commit()
     conn.close()
 
-    await interaction.response.send_message(f"📅 Partido programado: **{local} vs {visitante}**")
+    await interaction.followup.send(f"📅 Partido programado: **{local} vs {visitante}**")
 
 @bot.tree.command(name="fixture", description="Consulta el fixture por equipo.")
 async def fixture(interaction: discord.Interaction):
+    await interaction.response.defer(ephemeral=True)
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
     cursor.execute("SELECT id, nombre FROM equipos")
@@ -692,14 +655,15 @@ async def fixture(interaction: discord.Interaction):
     conn.close()
 
     if not equipos:
-        await interaction.response.send_message("No hay equipos registrados.", ephemeral=True)
+        await interaction.followup.send("No hay equipos registrados.", ephemeral=True)
         return
 
-    await interaction.response.send_message("Selecciona tu equipo para ver sus partidos:", view=FixtureView(equipos), ephemeral=True)
+    await interaction.followup.send("Selecciona tu equipo para ver sus partidos:", view=FixtureView(equipos), ephemeral=True)
 
 @bot.tree.command(name="sancionar", description="Aplica una sanción a un jugador.")
 @app_commands.checks.has_permissions(administrator=True)
 async def sancionar(interaction: discord.Interaction, jugador: discord.Member, tipo: str, suspension_partidos: int = 0, motivo: str = "Sin especificar"):
+    await interaction.response.defer()
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
     cursor.execute("INSERT INTO sanciones (jugador_id, tipo, partidos_suspension, motivo) VALUES (?, ?, ?, ?)",
@@ -707,10 +671,11 @@ async def sancionar(interaction: discord.Interaction, jugador: discord.Member, t
     conn.commit()
     conn.close()
 
-    await interaction.response.send_message(f"🚨 {jugador.mention} ha sido sancionado con **{tipo}**. Suspensión: {suspension_partidos} partido(s). Motivo: {motivo}")
+    await interaction.followup.send(f"🚨 {jugador.mention} ha sido sancionado con **{tipo}**. Suspensión: {suspension_partidos} partido(s). Motivo: {motivo}")
 
 @bot.tree.command(name="sancionados", description="Muestra la lista de jugadores suspendidos.")
 async def sancionados(interaction: discord.Interaction):
+    await interaction.response.defer()
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
     cursor.execute("SELECT jugador_id, tipo, partidos_suspension, motivo FROM sanciones WHERE partidos_suspension > 0")
@@ -718,7 +683,7 @@ async def sancionados(interaction: discord.Interaction):
     conn.close()
 
     if not lista:
-        await interaction.response.send_message("✅ No hay jugadores suspendidos actualmente.", ephemeral=True)
+        await interaction.followup.send("✅ No hay jugadores suspendidos actualmente.", ephemeral=True)
         return
 
     embed = discord.Embed(title="🚨 Jugadores Sancionados", color=discord.Color.red())
@@ -731,7 +696,7 @@ async def sancionados(interaction: discord.Interaction):
             inline=False
         )
 
-    await interaction.response.send_message(embed=embed)
+    await interaction.followup.send(embed=embed)
 
 
 # --- INICIO DEL BOT Y SERVIDOR WEB ---
