@@ -150,7 +150,9 @@ class TicketSelect(discord.ui.Select):
         )
 
     async def callback(self, interaction: discord.Interaction):
+        # Respuesta instantánea a Discord
         await interaction.response.defer(ephemeral=True)
+
         categoria = self.values[0]
         guild = interaction.guild
         user = interaction.user
@@ -161,15 +163,18 @@ class TicketSelect(discord.ui.Select):
             await interaction.followup.send(f"❌ Ya tienes un ticket abierto de este tipo en {existing_channel.mention}", ephemeral=True)
             return
 
+        # IDs de roles de Staff para asignación directa de permisos sin bucles pesados
+        ID_ADMINISTRADOR = 1538389985336762448
+        rol_admin = guild.get_role(ID_ADMINISTRADOR)
+
         overwrites = {
             guild.default_role: discord.PermissionOverwrite(read_messages=False),
             user: discord.PermissionOverwrite(read_messages=True, send_messages=True, attach_files=True),
             guild.me: discord.PermissionOverwrite(read_messages=True, send_messages=True, manage_channels=True)
         }
 
-        for role in guild.roles:
-            if role.permissions.administrator:
-                overwrites[role] = discord.PermissionOverwrite(read_messages=True, send_messages=True)
+        if rol_admin:
+            overwrites[rol_admin] = discord.PermissionOverwrite(read_messages=True, send_messages=True)
 
         category = interaction.channel.category
         ticket_channel = await guild.create_text_channel(
@@ -475,7 +480,11 @@ async def replay(interaction: discord.Interaction, archivo: discord.Attachment, 
 
     try:
         node_path = shutil.which("node") or "node"
-        result = subprocess.run([node_path, "parse_replay.js", file_path], capture_output=True, text=True, check=True)
+        loop = asyncio.get_event_loop()
+        result = await loop.run_in_executor(
+            None,
+            lambda: subprocess.run([node_path, "parse_replay.js", file_path], capture_output=True, text=True, check=True)
+        )
         data = json.loads(result.stdout)
         os.remove(file_path)
     except Exception as e:
