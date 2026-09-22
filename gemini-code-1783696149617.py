@@ -91,6 +91,33 @@ def init_db():
             FOREIGN KEY (jugador_id) REFERENCES jugadores(discord_id)
         )
     ''')
+
+    # Tabla de Historial de Traspasos (NUEVO)
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS historial_traspasos (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            jugador_id INTEGER NOT NULL,
+            origen_id INTEGER,
+            destino_id INTEGER NOT NULL,
+            fecha TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (jugador_id) REFERENCES jugadores(discord_id),
+            FOREIGN KEY (origen_id) REFERENCES equipos(id),
+            FOREIGN KEY (destino_id) REFERENCES equipos(id)
+        )
+    ''')
+
+    # Tabla del Museo de Títulos y Reconocimientos (NUEVO)
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS museo_titulos (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            equipo_id INTEGER NOT NULL,
+            tipo TEXT NOT NULL, -- 'titulo' o 'reconocimiento'
+            nombre TEXT NOT NULL,
+            temporada TEXT,
+            detalles TEXT,
+            FOREIGN KEY (equipo_id) REFERENCES equipos(id)
+        )
+    ''')
     
     conn.commit()
     conn.close()
@@ -150,7 +177,6 @@ class TicketSelect(discord.ui.Select):
         )
 
     async def callback(self, interaction: discord.Interaction):
-        # Respuesta instantánea a Discord
         await interaction.response.defer(ephemeral=True)
 
         categoria = self.values[0]
@@ -163,7 +189,6 @@ class TicketSelect(discord.ui.Select):
             await interaction.followup.send(f"❌ Ya tienes un ticket abierto de este tipo en {existing_channel.mention}", ephemeral=True)
             return
 
-        # IDs de roles de Staff para asignación directa de permisos sin bucles pesados
         ID_ADMINISTRADOR = 1538389985336762448
         rol_admin = guild.get_role(ID_ADMINISTRADOR)
 
@@ -241,6 +266,167 @@ class FixtureView(discord.ui.View):
     def __init__(self, equipos):
         super().__init__()
         self.add_item(FixtureSelect(equipos))
+
+
+# --- VISTAS INTERACTIVAS (TRASPASOS Y MUSEO) ---
+class TraspasoFirmasView(discord.ui.View):
+    def __init__(self, jugador, eq_origen_nombre, eq_destino_nombre, dt_origen_id, dt_destino_id, eq_origen_id, eq_destino_id, rol_origen_id, rol_destino_id):
+        super().__init__(timeout=86400) # 24 horas
+        self.jugador = jugador
+        self.eq_origen_nombre = eq_origen_nombre
+        self.eq_destino_nombre = eq_destino_nombre
+        self.dt_origen_id = dt_origen_id
+        self.dt_destino_id = dt_destino_id
+        self.eq_origen_id = eq_origen_id
+        self.eq_destino_id = eq_destino_id
+        self.rol_origen_id = rol_origen_id
+        self.rol_destino_id = rol_destino_id
+
+        self.firma_origen = False if dt_origen_id else True
+        self.firma_destino = False
+
+    def generar_embed(self):
+        f_orig_str = "✅ Firmado" if self.firma_origen else "⏳ Pendiente de firma"
+        f_dest_str = "✅ Firmado" if self.firma_destino else "⏳ Pendiente de firma"
+        
+        orig_val = self.eq_origen_nombre if self.eq_origen_nombre else "Libre / Sin Equipo"
+
+        embed = discord.Embed(
+            title="📝 Solicitud Formal de Traspaso",
+            description=f"Se ha iniciado el proceso de transferencia para el jugador {self.jugador.mention}.",
+            color=discord.Color.orange()
+        )
+        embed.add_field(name="Origen", value=orig_val, inline=True)
+        embed.add_field(name="Destino", value=self.eq_destino_nombre, inline=True)
+        embed.add_field(name="\u200b", value="\u200b", inline=False)
+        embed.add_field(name=f"Firma DT Origen", value=f_orig_str, inline=True)
+        embed.add_field(name=f"Firma DT Destino", value=f_dest_str, inline=True)
+        embed.set_footer(text="Ambos DTs deben autorizar presionando sus respectivos botones.")
+        return embed
+
+    @discord.ui.button(label="✍️ Firmar (DT Origen)", style=discord.ButtonStyle.secondary, custom_id="firma_dt_origen")
+    async def firmar_origen(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not self.dt_origen_id:
+            await interaction.response.send_message("❌ El jugador no tenía equipo previo, no requiere esta firma.", ephemeral=True)
+            return
+
+        if interaction.user.id != self.dt_origen_id:
+            await interaction.response.send_message("❌ Solo el DT del equipo de origen puede presionar este botón.", ephemeral=True)
+            return
+
+        self.firma_origen = True
+        button.disabled = True
+        button.style = discord.ButtonStyle.success
+        button.label = "✍️ Firmado (Origen)"
+
+        await interaction.response.edit_message(embed=self.generar_embed(), view=self)
+        await self.comprobar_completado(interaction)
+
+    @discord.ui.button(label="✍️ Firmar (DT Destino)", style=discord.ButtonStyle.primary, custom_id="firma_dt_destino")
+    async def firmar_destino(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != self.dt_destino_id:
+            await interaction.response.send_message("❌ Solo el DT del equipo de destino puede presionar este botón.", ephemeral=True)
+            return
+
+        self.firma_destino = True
+        button.disabled = True
+        button.style = discord.ButtonStyle.success
+        button.label = "✍️ Firmado (Destino)"
+
+        await interaction.response.edit_message(embed=self.generar_embed(), view=self)
+        await self.comprobar_completado(interaction)
+
+    async def comprobar_completado(self, interaction: discord.Interaction):
+        if self.firma_origen and self.firma_destino:
+            guild = interaction.guild
+            
+            # Quitar rol de origen si aplica
+            if self.rol_origen_id:
+                rol_old = guild.get_role(self.rol_origen_id)
+                if rol_old and rol_old in self.jugador.roles:
+                    await self.jugador.remove_roles(rol_old)
+
+            # Asignar rol de destino
+            if self.rol_destino_id:
+                rol_new = guild.get_role(self.rol_destino_id)
+                if rol_new:
+                    await self.jugador.add_roles(rol_new)
+
+            # Actualizar Base de Datos
+            conn = sqlite3.connect(DB_NAME)
+            cursor = conn.cursor()
+            cursor.execute(
+                "INSERT INTO jugadores (discord_id, equipo_id) VALUES (?, ?) ON CONFLICT(discord_id) DO UPDATE SET equipo_id = ?",
+                (self.jugador.id, self.eq_destino_id, self.eq_destino_id)
+            )
+            cursor.execute(
+                "INSERT INTO historial_traspasos (jugador_id, origen_id, destino_id) VALUES (?, ?, ?)",
+                (self.jugador.id, self.eq_origen_id, self.eq_destino_id)
+            )
+            conn.commit()
+            conn.close()
+
+            embed_final = self.generar_embed()
+            embed_final.title = "✅ ¡Traspaso Oficializado!"
+            embed_final.color = discord.Color.green()
+            embed_final.description = f"El traspaso de {self.jugador.mention} a **{self.eq_destino_nombre}** ha sido completado y registrado exitosamente."
+
+            for child in self.children:
+                child.disabled = True
+
+            await interaction.message.edit(embed=embed_final, view=self)
+
+
+class MuseoSelect(discord.ui.Select):
+    def __init__(self, equipos):
+        options = [discord.SelectOption(label=eq[1], value=str(eq[0]), emoji="🏛️") for eq in equipos]
+        super().__init__(placeholder="Selecciona un equipo para ver su vitrina...", options=options)
+
+    async def callback(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+        equipo_id = int(self.values[0])
+
+        conn = sqlite3.connect(DB_NAME)
+        cursor = conn.cursor()
+        cursor.execute("SELECT nombre FROM equipos WHERE id = ?", (equipo_id,))
+        eq_nombre = cursor.fetchone()[0]
+
+        cursor.execute("SELECT tipo, nombre, temporada, detalles FROM museo_titulos WHERE equipo_id = ?", (equipo_id,))
+        items = cursor.fetchall()
+        conn.close()
+
+        if not items:
+            await interaction.followup.send(f"🏛️ La vitrina de **{eq_nombre}** está vacía por el momento.", ephemeral=True)
+            return
+
+        embed = discord.Embed(title=f"🏛️ Vitrina de Trofeos: {eq_nombre}", color=discord.Color.gold())
+        
+        titulos = [it for it in items if it[0] == 'titulo']
+        reconocimientos = [it for it in items if it[0] == 'reconocimiento']
+
+        if titulos:
+            txt = ""
+            for t in titulos:
+                temp_str = f" ({t[2]})" if t[2] else ""
+                det_str = f" - *{t[3]}*" if t[3] else ""
+                txt += f"🏆 **{t[1]}**{temp_str}{det_str}\n"
+            embed.add_field(name="🏆 Títulos Oficiales", value=txt, inline=False)
+
+        if reconocimientos:
+            txt = ""
+            for r in reconocimientos:
+                temp_str = f" ({r[2]})" if r[2] else ""
+                det_str = f" - *{r[3]}*" if r[3] else ""
+                txt += f"🎖️ **{r[1]}**{temp_str}{det_str}\n"
+            embed.add_field(name="🎖️ Menciones y Reconocimientos", value=txt, inline=False)
+
+        await interaction.followup.send(embed=embed, ephemeral=True)
+
+
+class MuseoView(discord.ui.View):
+    def __init__(self, equipos):
+        super().__init__()
+        self.add_item(MuseoSelect(equipos))
 
 
 # --- EVENTOS PRINCIPALES ---
@@ -400,7 +586,86 @@ class SeasonGroup(app_commands.Group):
 bot.tree.add_command(SeasonGroup())
 
 
-# --- RESTO DE COMANDOS DE LA LIGA ---
+# --- GRUPO DE COMANDOS DEL MUSEO ---
+class MuseoGroup(app_commands.Group):
+    def __init__(self):
+        super().__init__(name="museo", description="Módulo de museo, vitrinas y trofeos de equipos")
+
+    async def equipo_autocomplete(self, interaction: discord.Interaction, current: str):
+        conn = sqlite3.connect(DB_NAME)
+        cursor = conn.cursor()
+        cursor.execute("SELECT nombre FROM equipos WHERE nombre LIKE ? LIMIT 25", (f"%{current}%",))
+        equipos = cursor.fetchall()
+        conn.close()
+        return [app_commands.Choice(name=eq[0], value=eq[0]) for eq in equipos]
+
+    @app_commands.command(name="add_titulo", description="Añade un título oficial a la vitrina de un equipo (Admin).")
+    @app_commands.checks.has_permissions(administrator=True)
+    @app_commands.autocomplete(equipo=equipo_autocomplete)
+    async def add_titulo(self, interaction: discord.Interaction, equipo: str, titulo: str, temporada: str = None, detalles: str = None):
+        await interaction.response.defer()
+        conn = sqlite3.connect(DB_NAME)
+        cursor = conn.cursor()
+        cursor.execute("SELECT id FROM equipos WHERE nombre = ?", (equipo,))
+        eq = cursor.fetchone()
+
+        if not eq:
+            await interaction.followup.send(f"❌ El equipo **{equipo}** no existe.", ephemeral=True)
+            conn.close()
+            return
+
+        cursor.execute(
+            "INSERT INTO museo_titulos (equipo_id, tipo, nombre, temporada, detalles) VALUES (?, 'titulo', ?, ?, ?)",
+            (eq[0], titulo, temporada, detalles)
+        )
+        conn.commit()
+        conn.close()
+
+        await interaction.followup.send(f"🏆 Se ha añadido el título **{titulo}** a la vitrina de **{equipo}**.")
+
+    @app_commands.command(name="add_reconocimiento", description="Añade una mención o reconocimiento a un equipo (Admin).")
+    @app_commands.checks.has_permissions(administrator=True)
+    @app_commands.autocomplete(equipo=equipo_autocomplete)
+    async def add_reconocimiento(self, interaction: discord.Interaction, equipo: str, reconocimiento: str, temporada: str = None, detalles: str = None):
+        await interaction.response.defer()
+        conn = sqlite3.connect(DB_NAME)
+        cursor = conn.cursor()
+        cursor.execute("SELECT id FROM equipos WHERE nombre = ?", (equipo,))
+        eq = cursor.fetchone()
+
+        if not eq:
+            await interaction.followup.send(f"❌ El equipo **{equipo}** no existe.", ephemeral=True)
+            conn.close()
+            return
+
+        cursor.execute(
+            "INSERT INTO museo_titulos (equipo_id, tipo, nombre, temporada, detalles) VALUES (?, 'reconocimiento', ?, ?, ?)",
+            (eq[0], reconocimiento, temporada, detalles)
+        )
+        conn.commit()
+        conn.close()
+
+        await interaction.followup.send(f"🎖️ Se ha añadido el reconocimiento **{reconocimiento}** a **{equipo}**.")
+
+    @app_commands.command(name="ver", description="Abre el menú interactivo para consultar las vitrinas de los equipos.")
+    async def ver(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+        conn = sqlite3.connect(DB_NAME)
+        cursor = conn.cursor()
+        cursor.execute("SELECT id, nombre FROM equipos")
+        equipos = cursor.fetchall()
+        conn.close()
+
+        if not equipos:
+            await interaction.followup.send("No hay equipos registrados en el sistema.", ephemeral=True)
+            return
+
+        await interaction.followup.send("🏛️ Selecciona un equipo para consultar su vitrina:", view=MuseoView(equipos), ephemeral=True)
+
+bot.tree.add_command(MuseoGroup())
+
+
+# --- RESTO DE COMANDOS DE LA LIGA Y TRASPASOS ---
 @bot.tree.command(name="inscribir_equipo", description="Inscribe un equipo y crea su rol en Discord.")
 @app_commands.checks.has_permissions(administrator=True)
 async def inscribir_equipo(interaction: discord.Interaction, nombre_equipo: str, dt: discord.Member):
@@ -420,8 +685,68 @@ async def inscribir_equipo(interaction: discord.Interaction, nombre_equipo: str,
     finally:
         conn.close()
 
-@bot.tree.command(name="fichar_jugador", description="Asigna un jugador a un equipo y le da el rol.")
+async def equipo_autocomplete(interaction: discord.Interaction, current: str):
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    cursor.execute("SELECT nombre FROM equipos WHERE nombre LIKE ? LIMIT 25", (f"%{current}%",))
+    equipos = cursor.fetchall()
+    conn.close()
+    return [app_commands.Choice(name=eq[0], value=eq[0]) for eq in equipos]
+
+@bot.tree.command(name="fichar", description="Inicia una solicitud formal de traspaso con firmas interactivas.")
+@app_commands.autocomplete(equipo_destino=equipo_autocomplete)
+async def fichar(interaction: discord.Interaction, jugador: discord.Member, equipo_destino: str):
+    await interaction.response.defer()
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+
+    # Obtener Equipo Destino
+    cursor.execute("SELECT id, dt_id, rol_id FROM equipos WHERE nombre = ?", (equipo_destino,))
+    eq_dest = cursor.fetchone()
+
+    if not eq_dest:
+        await interaction.followup.send(f"❌ El equipo de destino **{equipo_destino}** no existe.", ephemeral=True)
+        conn.close()
+        return
+
+    eq_dest_id, dt_dest_id, rol_dest_id = eq_dest
+
+    # Comprobar Equipo Actual del Jugador
+    cursor.execute('''
+        SELECT e.id, e.nombre, e.dt_id, e.rol_id 
+        FROM jugadores j
+        JOIN equipos e ON j.equipo_id = e.id
+        WHERE j.discord_id = ?
+    ''', (jugador.id,))
+    eq_orig = cursor.fetchone()
+    conn.close()
+
+    eq_orig_id = eq_orig[0] if eq_orig else None
+    eq_orig_nombre = eq_orig[1] if eq_orig else None
+    dt_orig_id = eq_orig[2] if eq_orig else None
+    rol_orig_id = eq_orig[3] if eq_orig else None
+
+    if eq_orig_id == eq_dest_id:
+        await interaction.followup.send(f"❌ {jugador.mention} ya pertenece a **{equipo_destino}**.", ephemeral=True)
+        return
+
+    view = TraspasoFirmasView(
+        jugador=jugador,
+        eq_origen_nombre=eq_orig_nombre,
+        eq_destino_nombre=equipo_destino,
+        dt_origen_id=dt_orig_id,
+        dt_destino_id=dt_dest_id,
+        eq_origen_id=eq_orig_id,
+        eq_destino_id=eq_dest_id,
+        rol_origen_id=rol_orig_id,
+        rol_destino_id=rol_dest_id
+    )
+
+    await interaction.followup.send(embed=view.generar_embed(), view=view)
+
+@bot.tree.command(name="fichar_jugador", description="Fichaje directo por administración (sin requerir firmas).")
 @app_commands.checks.has_permissions(administrator=True)
+@app_commands.autocomplete(nombre_equipo=equipo_autocomplete)
 async def fichar_jugador(interaction: discord.Interaction, jugador: discord.Member, nombre_equipo: str):
     await interaction.response.defer()
     conn = sqlite3.connect(DB_NAME)
@@ -444,15 +769,7 @@ async def fichar_jugador(interaction: discord.Interaction, jugador: discord.Memb
     if rol:
         await jugador.add_roles(rol)
 
-    await interaction.followup.send(f"📝 {jugador.mention} ha sido fichado por **{nombre_equipo}**.")
-
-async def equipo_autocomplete(interaction: discord.Interaction, current: str):
-    conn = sqlite3.connect(DB_NAME)
-    cursor = conn.cursor()
-    cursor.execute("SELECT nombre FROM equipos WHERE nombre LIKE ? LIMIT 25", (f"%{current}%",))
-    equipos = cursor.fetchall()
-    conn.close()
-    return [app_commands.Choice(name=eq[0], value=eq[0]) for eq in equipos]
+    await interaction.followup.send(f"📝 {jugador.mention} ha sido fichado por **{nombre_equipo}** por un administrador.")
 
 @bot.tree.command(name="replay", description="Procesa un archivo .hbr2 para registrar el partido.")
 @app_commands.autocomplete(local=equipo_autocomplete, visitante=equipo_autocomplete)
@@ -587,7 +904,7 @@ async def tabla(interaction: discord.Interaction):
     tabla_ordenada = sorted(stats.values(), key=lambda x: (x["pts"], x["gf"] - x["gc"], x["gf"]), reverse=True)
 
     embed = discord.Embed(title="🏆 Tabla de Posiciones", color=discord.Color.gold())
-    descripcion = "```\nPos | Equipo           | PJ | PG | PE | PP | DG | PTS\n"
+    descripcion = "```\nPos | Equipo            | PJ | PG | PE | PP | DG | PTS\n"
     descripcion += "-" * 50 + "\n"
 
     for i, eq in enumerate(tabla_ordenada, 1):
