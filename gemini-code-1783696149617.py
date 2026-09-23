@@ -131,7 +131,7 @@ app = Flask('')
 
 @app.route('/')
 def home():
-    return "Bot de Liga Haxball (Vanta League) activo 24/7"
+    return "Bot de Liga Haxball activo 24/7"
 
 def run_web():
     port = int(os.environ.get("PORT", 10000))
@@ -609,6 +609,7 @@ class MuseoGroup(app_commands.Group):
 
 bot.tree.add_command(MuseoGroup())
 
+
 # ==========================================
 # --- 7. MÓDULO DE TEMPORADAS --------------
 # ==========================================
@@ -649,8 +650,109 @@ class SeasonGroup(app_commands.Group):
 
 bot.tree.add_command(SeasonGroup())
 
+
 # ==========================================
-# --- 8. COMANDOS DE SETUP Y EVENTOS -------
+# --- 8. MÓDULO DE LIGA, PARTIDOS Y STATS --
+# ==========================================
+class LigaGroup(app_commands.Group):
+    def __init__(self):
+        super().__init__(name="liga", description="Comandos operativos de la liga y partidos")
+
+    @app_commands.command(name="registrar_partido", description="Registra el marcador de un partido jugado")
+    @app_commands.checks.has_permissions(administrator=True)
+    @app_commands.autocomplete(local=equipo_autocomplete, visitante=equipo_autocomplete)
+    async def registrar_partido(self, interaction: discord.Interaction, temporada: str, jornada: int, local: str, visitante: str, goles_local: int, goles_visitante: int, replay: str = None):
+        if not interaction.response.is_done():
+            await interaction.response.defer()
+
+        conn = sqlite3.connect(DB_NAME)
+        cursor = conn.cursor()
+        
+        cursor.execute("SELECT id FROM temporadas WHERE nombre = ?", (temporada,))
+        temp = cursor.fetchone()
+        if not temp:
+            await interaction.followup.send(f"❌ La temporada **{temporada}** no existe.", ephemeral=True)
+            conn.close()
+            return
+        temp_id = temp[0]
+
+        cursor.execute("SELECT id FROM equipos WHERE nombre = ?", (local,))
+        eq_l = cursor.fetchone()
+        cursor.execute("SELECT id FROM equipos WHERE nombre = ?", (visitante,))
+        eq_v = cursor.fetchone()
+
+        if not eq_l or not eq_v:
+            await interaction.followup.send("❌ Uno de los equipos no está registrado.", ephemeral=True)
+            conn.close()
+            return
+
+        cursor.execute(
+            "INSERT INTO partidos (temporada_id, jornada, equipo_local_id, equipo_visitante_id, goles_local, goles_visitante, jugado, replay_url) VALUES (?, ?, ?, ?, ?, ?, 1, ?)",
+            (temp_id, jornada, eq_l[0], eq_v[0], goles_local, goles_visitante, replay)
+        )
+        conn.commit()
+        conn.close()
+
+        await interaction.followup.send(f"⚽ Partido registrado: **{local} {goles_local} - {goles_visitante} {visitante}** (Jornada {jornada}).")
+
+    @app_commands.command(name="stats", description="Muestra las estadísticas de un jugador")
+    async def stats(self, interaction: discord.Interaction, miembro: discord.Member):
+        if not interaction.response.is_done():
+            await interaction.response.defer(ephemeral=True)
+
+        conn = sqlite3.connect(DB_NAME)
+        cursor = conn.cursor()
+        cursor.execute("SELECT equipo_id, goles, asistencias, mvps, partidos_jugados FROM jugadores WHERE discord_id = ?", (miembro.id,))
+        row = cursor.fetchone()
+        
+        eq_nombre = "Agente Libre"
+        if row and row[0]:
+            cursor.execute("SELECT nombre FROM equipos WHERE id = ?", (row[0],))
+            eq_row = cursor.fetchone()
+            if eq_row:
+                eq_nombre = eq_row[0]
+
+        conn.close()
+
+        if not row:
+            await interaction.followup.send(f"📊 {miembro.mention} aún no registra estadísticas en la liga.", ephemeral=True)
+            return
+
+        embed = discord.Embed(title=f"📊 Estadísticas de {miembro.display_name}", color=discord.Color.blue())
+        embed.add_field(name="Equipo", value=eq_nombre, inline=False)
+        embed.add_field(name="Goles", value=str(row[1]), inline=True)
+        embed.add_field(name="Asistencias", value=str(row[2]), inline=True)
+        embed.add_field(name="MVPs", value=str(row[3]), inline=True)
+        embed.add_field(name="Partidos Jugados", value=str(row[4]), inline=True)
+
+        await interaction.followup.send(embed=embed, ephemeral=True)
+
+    @app_commands.command(name="sancion", description="Aplica una sanción a un jugador")
+    @app_commands.checks.has_permissions(administrator=True)
+    async def sancion(self, interaction: discord.Interaction, miembro: discord.Member, tipo: str, partidos: int, motivo: str):
+        if not interaction.response.is_done():
+            await interaction.response.defer()
+
+        conn = sqlite3.connect(DB_NAME)
+        cursor = conn.cursor()
+        cursor.execute(
+            "INSERT INTO jugadores (discord_id) VALUES (?) ON CONFLICT(discord_id) DO NOTHING",
+            (miembro.id,)
+        )
+        cursor.execute(
+            "INSERT INTO sanciones (jugador_id, tipo, partidos_suspension, motivo, activa) VALUES (?, ?, ?, ?, 1)",
+            (miembro.id, tipo, partidos, motivo)
+        )
+        conn.commit()
+        conn.close()
+
+        await interaction.followup.send(f"⚖️ Sanción aplicada a {miembro.mention}: **{tipo}** ({partidos} partidos). Motivo: {motivo}")
+
+bot.tree.add_command(LigaGroup())
+
+
+# ==========================================
+# --- 9. COMANDOS DE SETUP Y EVENTOS -------
 # ==========================================
 @bot.tree.command(name="setup_tickets", description="Despliega el panel de tickets")
 @app_commands.default_permissions(administrator=True)
