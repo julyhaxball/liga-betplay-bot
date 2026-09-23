@@ -77,7 +77,7 @@ def init_db():
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             partido_id INTEGER NOT NULL,
             jugador_id INTEGER NOT NULL,
-            tipo TEXT DEFAULT 'gol', -- 'gol', 'asistencia', 'autogol'
+            tipo TEXT DEFAULT 'gol',
             cantidad INTEGER DEFAULT 1,
             FOREIGN KEY (partido_id) REFERENCES partidos(id),
             FOREIGN KEY (jugador_id) REFERENCES jugadores(discord_id)
@@ -89,7 +89,7 @@ def init_db():
         CREATE TABLE IF NOT EXISTS sanciones (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             jugador_id INTEGER NOT NULL,
-            tipo TEXT NOT NULL, -- 'amarilla', 'roja', 'suspension'
+            tipo TEXT NOT NULL,
             partidos_suspension INTEGER DEFAULT 0,
             motivo TEXT,
             activa INTEGER DEFAULT 1,
@@ -164,18 +164,36 @@ async def equipo_autocomplete(interaction: discord.Interaction, current: str):
     return [app_commands.Choice(name=eq[0], value=eq[0]) for eq in equipos]
 
 
-# --- TICKETS PERSISTENTES ---
-class TicketCloseView(discord.ui.View):
-    def __init__(self):
+# --- VISTA INTERACTIVA DENTRO DEL TICKET ---
+class TicketInteractiveView(discord.ui.View):
+    def __init__(self, categoria_tipo: str = "otro"):
         super().__init__(timeout=None)
+        self.categoria_tipo = categoria_tipo
 
-    @discord.ui.button(label="🔒 Cerrar Ticket", style=discord.ButtonStyle.danger, custom_id="close_ticket_btn")
-    async def close_ticket(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_message("🔒 Este ticket se cerrará y eliminará en 5 segundos...", ephemeral=False)
+    @discord.ui.button(label="📌 Ver información / FAQ", style=discord.ButtonStyle.primary, custom_id="btn_faq_ticket")
+    async def ver_faq(self, interaction: discord.Interaction, button: discord.ui.Button):
+        respuestas = {
+            "alianza": "🤝 **Requisitos de Alianza:**\n- Contar con al menos 100 miembros activos.\n- Servidor organizado de Haxball o eSports.\n- Para concretar, presiona **Llamar al Staff** y déjanos el enlace de tu servidor.",
+            "reporte": "❗ **Para realizar un reporte:**\n- Adjunta captura de pantalla o video de la infracción.\n- Indica el nombre/ID del usuario reportado y la regla incumplida.",
+            "postulacion": "🧑‍💼 **Postulaciones abiertas:**\n- Para Admin / Periodista / Creador de contenido.\n- Deja tus datos: Edad, experiencia previa y disponibilidad de tiempo.",
+            "otro": "❓ **Consulta general:**\n- Por favor escribe tu duda detalladamente aquí en el canal."
+        }
+        info = respuestas.get(self.categoria_tipo, "Escribe tu duda detalladamente en este canal.")
+        await interaction.response.send_message(f"ℹ️ **Información Automática:**\n\n{info}", ephemeral=True)
+
+    @discord.ui.button(label="🔔 Llamar al Staff", style=discord.ButtonStyle.warning, custom_id="btn_llamar_staff")
+    async def llamar_staff(self, interaction: discord.Interaction, button: discord.ui.Button):
+        ID_ADMINISTRADOR = 1538389985336762448
+        await interaction.response.send_message(f"🔔 <@&{ID_ADMINISTRADOR}>, el usuario {interaction.user.mention} solicita asistencia de un administrador.")
+
+    @discord.ui.button(label="✅ Duda Resuelta (Cerrar)", style=discord.ButtonStyle.success, custom_id="btn_duda_resuelta")
+    async def duda_resuelta(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_message("✅ ¡Nos alegra haberte ayudado! Este ticket se cerrará y eliminará en 5 segundos...")
         await asyncio.sleep(5)
         await interaction.channel.delete()
 
 
+# --- PANEL INICIAL Y SELECTOR DE TICKETS ---
 class TicketSelect(discord.ui.Select):
     def __init__(self):
         options = [
@@ -189,49 +207,59 @@ class TicketSelect(discord.ui.Select):
             min_values=1,
             max_values=1,
             options=options,
-            custom_id="ticket_select_menu"
+            custom_id="ticket_select_menu_v4"
         )
 
     async def callback(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
 
-        categoria = self.values[0]
+        categoria_tipo = self.values[0]
         guild = interaction.guild
         user = interaction.user
 
-        channel_name = f"ticket-{categoria}-{user.name.lower()}"
+        channel_name = f"ticket-{categoria_tipo}-{user.name.lower()}"
+        
         existing_channel = discord.utils.get(guild.channels, name=channel_name)
         if existing_channel:
-            await interaction.followup.send(f"❌ Ya tienes un ticket abierto de este tipo en {existing_channel.mention}", ephemeral=True)
+            await interaction.followup.send(f"❌ Ya tienes un ticket abierto en {existing_channel.mention}", ephemeral=True)
             return
 
         ID_ADMINISTRADOR = 1538389985336762448
         rol_admin = guild.get_role(ID_ADMINISTRADOR)
 
         overwrites = {
-            guild.default_role: discord.PermissionOverwrite(read_messages=False),
-            user: discord.PermissionOverwrite(read_messages=True, send_messages=True, attach_files=True),
-            guild.me: discord.PermissionOverwrite(read_messages=True, send_messages=True, manage_channels=True)
+            guild.default_role: discord.PermissionOverwrite(read_messages=False, view_channel=False),
+            user: discord.PermissionOverwrite(read_messages=True, send_messages=True, attach_files=True, view_channel=True),
+            guild.me: discord.PermissionOverwrite(read_messages=True, send_messages=True, manage_channels=True, view_channel=True, embed_links=True)
         }
 
         if rol_admin:
-            overwrites[rol_admin] = discord.PermissionOverwrite(read_messages=True, send_messages=True)
+            overwrites[rol_admin] = discord.PermissionOverwrite(read_messages=True, send_messages=True, view_channel=True)
 
-        category = interaction.channel.category
-        ticket_channel = await guild.create_text_channel(
-            name=channel_name,
-            category=category,
-            overwrites=overwrites
-        )
+        target_category = interaction.channel.category
+        if not target_category:
+            target_category = discord.utils.get(guild.categories, name="📁 TICKETS")
+            if not target_category:
+                target_category = await guild.create_category("📁 TICKETS")
 
-        embed = discord.Embed(
-            title=f"🎫 Ticket de {categoria.capitalize()} - {user.name}",
-            description="Un miembro del Staff te atenderá pronto. Explica tu consulta o motivo aquí abajo.",
-            color=discord.Color.blue()
-        )
+        try:
+            ticket_channel = await guild.create_text_channel(
+                name=channel_name,
+                category=target_category,
+                overwrites=overwrites
+            )
 
-        await ticket_channel.send(content=f"{user.mention}", embed=embed, view=TicketCloseView())
-        await interaction.followup.send(f"✅ Ticket creado correctamente: {ticket_channel.mention}", ephemeral=True)
+            embed = discord.Embed(
+                title=f"🎫 Ticket de {categoria_tipo.capitalize()}",
+                description=f"Hola {user.mention}.\n\nUsa los botones interactivos de abajo para consultar información rápida, solicitar la ayuda del Staff o cerrar la consulta si tu duda queda resuelta.",
+                color=discord.Color.blue()
+            )
+
+            await ticket_channel.send(content=f"{user.mention}", embed=embed, view=TicketInteractiveView(categoria_tipo))
+            await interaction.followup.send(f"✅ Ticket creado correctamente: {ticket_channel.mention}", ephemeral=True)
+
+        except Exception as e:
+            await interaction.followup.send(f"❌ Error al crear el ticket: {e}", ephemeral=True)
 
 
 class TicketLaunchView(discord.ui.View):
@@ -617,13 +645,11 @@ async def subir_replay(interaction: discord.Interaction, local: str, visitante: 
 
     partido_id = partido[0]
 
-    # Actualizar estado del partido
     cursor.execute(
         "UPDATE partidos SET goles_local = ?, goles_visitante = ?, jugado = 1, replay_url = ? WHERE id = ?",
         (goles_local, goles_visitante, replay_url, partido_id)
     )
 
-    # Actualizar MVP
     cursor.execute(
         "INSERT INTO jugadores (discord_id, mvps, partidos_jugados) VALUES (?, 1, 1) ON CONFLICT(discord_id) DO UPDATE SET mvps = mvps + 1, partidos_jugados = partidos_jugados + 1",
         (mvp.id,)
@@ -690,7 +716,6 @@ async def tabla(interaction: discord.Interaction):
 
     conn.close()
 
-    # Ordenar por Puntos, luego Diferencia de Goles, luego Goles Favor
     tabla_datos.sort(key=lambda x: (x["pts"], x["dg"], x["gf"]), reverse=True)
 
     embed = discord.Embed(title=f"🏆 Tabla de Posiciones: {temp[1]}", color=discord.Color.gold())
@@ -766,7 +791,7 @@ async def mi_perfil(interaction: discord.Interaction, usuario: discord.Member = 
     await interaction.followup.send(embed=embed)
 
 
-# --- COMANDOS TRASPASOS & PANEL ---
+# --- COMANDOS TRASPASOS & PANEL DE TICKETS ---
 @bot.tree.command(name="traspaso", description="Inicia un traspaso formal con firmas requeridas de DTs.")
 @app_commands.autocomplete(equipo_destino=equipo_autocomplete)
 async def traspaso(interaction: discord.Interaction, jugador: discord.Member, equipo_destino: str):
@@ -843,8 +868,9 @@ async def ticket_panel(interaction: discord.Interaction):
 # --- EVENTOS DE INICIO ---
 @bot.event
 async def on_ready():
+    # Registrar las vistas persistentes para que sigan respondiendo tras reinicios
     bot.add_view(TicketLaunchView())
-    bot.add_view(TicketCloseView())
+    bot.add_view(TicketInteractiveView())
 
     await bot.change_presence(
         status=discord.Status.online,
