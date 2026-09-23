@@ -172,7 +172,11 @@ class TicketInteractiveView(discord.ui.View):
 
     @discord.ui.button(label="📌 Ver información / FAQ", style=discord.ButtonStyle.primary, custom_id="btn_faq_ticket")
     async def ver_faq(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.defer(ephemeral=True)
+        try:
+            await interaction.response.defer(ephemeral=True)
+        except Exception:
+            pass
+
         respuestas = {
             "alianza": "🤝 **Requisitos de Alianza:**\n- Contar con al menos 100 miembros activos.\n- Servidor organizado de Haxball o eSports.\n- Para concretar, presiona **Llamar al Staff** y déjanos el enlace de tu servidor.",
             "reporte": "❗ **Para realizar un reporte:**\n- Adjunta captura de pantalla o video de la infracción.\n- Indica el nombre/ID del usuario reportado y la regla incumplida.",
@@ -184,13 +188,19 @@ class TicketInteractiveView(discord.ui.View):
 
     @discord.ui.button(label="🔔 Llamar al Staff", style=discord.ButtonStyle.danger, custom_id="btn_llamar_staff")
     async def llamar_staff(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.defer()
+        try:
+            await interaction.response.defer()
+        except Exception:
+            pass
         ID_ADMINISTRADOR = 1538389985336762448
         await interaction.followup.send(f"🔔 <@&{ID_ADMINISTRADOR}>, el usuario {interaction.user.mention} solicita asistencia de un administrador.")
 
     @discord.ui.button(label="✅ Duda Resuelta (Cerrar)", style=discord.ButtonStyle.success, custom_id="btn_duda_resuelta")
     async def duda_resuelta(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.defer()
+        try:
+            await interaction.response.defer()
+        except Exception:
+            pass
         await interaction.followup.send("✅ ¡Nos alegra haberte ayudado! Este ticket se cerrará y eliminará en 5 segundos...")
         await asyncio.sleep(5)
         await interaction.channel.delete()
@@ -210,12 +220,15 @@ class TicketSelect(discord.ui.Select):
             min_values=1,
             max_values=1,
             options=options,
-            custom_id="ticket_select_menu_v4"
+            custom_id="ticket_select_menu_v5"
         )
 
     async def callback(self, interaction: discord.Interaction):
-        # Evitar timeout diferyendo inmediatamente
-        await interaction.response.defer(ephemeral=True)
+        # Responder inmediatamente a Discord para evitar que expire la interacción
+        try:
+            await interaction.response.defer(ephemeral=True)
+        except Exception:
+            pass
 
         categoria_tipo = self.values[0]
         guild = interaction.guild
@@ -240,11 +253,9 @@ class TicketSelect(discord.ui.Select):
         if rol_admin:
             overwrites[rol_admin] = discord.PermissionOverwrite(read_messages=True, send_messages=True, view_channel=True)
 
-        target_category = interaction.channel.category
+        target_category = interaction.channel.category or discord.utils.get(guild.categories, name="📁 TICKETS")
         if not target_category:
-            target_category = discord.utils.get(guild.categories, name="📁 TICKETS")
-            if not target_category:
-                target_category = await guild.create_category("📁 TICKETS")
+            target_category = await guild.create_category("📁 TICKETS")
 
         try:
             ticket_channel = await guild.create_text_channel(
@@ -316,7 +327,11 @@ class TraspasoFirmasView(discord.ui.View):
 
     @discord.ui.button(label="✍️ Firmar (DT Origen)", style=discord.ButtonStyle.secondary, custom_id="firma_dt_origen")
     async def firmar_origen(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.defer()
+        try:
+            await interaction.response.defer()
+        except Exception:
+            pass
+
         if not self.dt_origen_id:
             await interaction.followup.send("❌ El jugador no tenía equipo previo.", ephemeral=True)
             return
@@ -335,7 +350,11 @@ class TraspasoFirmasView(discord.ui.View):
 
     @discord.ui.button(label="✍️ Firmar (DT Destino)", style=discord.ButtonStyle.primary, custom_id="firma_dt_destino")
     async def firmar_destino(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.defer()
+        try:
+            await interaction.response.defer()
+        except Exception:
+            pass
+
         if interaction.user.id != self.dt_destino_id:
             await interaction.followup.send("❌ Solo el DT de destino puede firmar.", ephemeral=True)
             return
@@ -393,7 +412,11 @@ class MuseoSelect(discord.ui.Select):
         super().__init__(placeholder="Selecciona un equipo para consultar su vitrina...", options=options)
 
     async def callback(self, interaction: discord.Interaction):
-        await interaction.response.defer(ephemeral=True)
+        try:
+            await interaction.response.defer(ephemeral=True)
+        except Exception:
+            pass
+
         equipo_id = int(self.values[0])
 
         conn = sqlite3.connect(DB_NAME)
@@ -453,7 +476,11 @@ class MuseoGroup(app_commands.Group):
     @app_commands.checks.has_permissions(administrator=True)
     @app_commands.autocomplete(equipo=equipo_autocomplete)
     async def add_titulo(self, interaction: discord.Interaction, equipo: str, titulo: str, temporada: str = None, detalles: str = None):
-        await interaction.response.defer()
+        try:
+            await interaction.response.defer()
+        except Exception:
+            pass
+
         conn = sqlite3.connect(DB_NAME)
         cursor = conn.cursor()
         cursor.execute("SELECT id FROM equipos WHERE nombre = ?", (equipo,))
@@ -475,7 +502,11 @@ class MuseoGroup(app_commands.Group):
 
     @app_commands.command(name="ver", description="Abre el menú interactivo para ver trofeos.")
     async def ver(self, interaction: discord.Interaction):
-        await interaction.response.defer(ephemeral=True)
+        try:
+            await interaction.response.defer(ephemeral=True)
+        except Exception:
+            pass
+
         conn = sqlite3.connect(DB_NAME)
         cursor = conn.cursor()
         cursor.execute("SELECT id, nombre FROM equipos")
@@ -501,7 +532,11 @@ class SeasonGroup(app_commands.Group):
     @app_commands.command(name="create", description="Crea una nueva temporada")
     @app_commands.checks.has_permissions(administrator=True)
     async def season_create(self, interaction: discord.Interaction, nombre: str):
-        await interaction.response.defer()
+        try:
+            await interaction.response.defer()
+        except Exception:
+            pass
+
         conn = sqlite3.connect(DB_NAME)
         cursor = conn.cursor()
         try:
@@ -516,7 +551,11 @@ class SeasonGroup(app_commands.Group):
     @app_commands.command(name="start", description="Activa la temporada más reciente")
     @app_commands.checks.has_permissions(administrator=True)
     async def season_start(self, interaction: discord.Interaction):
-        await interaction.response.defer()
+        try:
+            await interaction.response.defer()
+        except Exception:
+            pass
+
         conn = sqlite3.connect(DB_NAME)
         cursor = conn.cursor()
         cursor.execute("SELECT id, nombre FROM temporadas WHERE estado = 'inscripcion' ORDER BY id DESC LIMIT 1")
@@ -541,7 +580,11 @@ bot.tree.add_command(SeasonGroup())
 @bot.tree.command(name="inscribir_equipo", description="Inscribe un equipo y crea su rol en el servidor.")
 @app_commands.checks.has_permissions(administrator=True)
 async def inscribir_equipo(interaction: discord.Interaction, nombre_equipo: str, dt: discord.Member):
-    await interaction.response.defer()
+    try:
+        await interaction.response.defer()
+    except Exception:
+        pass
+
     guild = interaction.guild
     rol = await guild.create_role(name=nombre_equipo, reason="Rol oficial de equipo Haxball")
     await dt.add_roles(rol)
@@ -561,7 +604,11 @@ async def inscribir_equipo(interaction: discord.Interaction, nombre_equipo: str,
 @app_commands.checks.has_permissions(administrator=True)
 @app_commands.autocomplete(nombre_equipo=equipo_autocomplete)
 async def borrar_equipo(interaction: discord.Interaction, nombre_equipo: str):
-    await interaction.response.defer()
+    try:
+        await interaction.response.defer()
+    except Exception:
+        pass
+
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
     
@@ -596,7 +643,11 @@ async def borrar_equipo(interaction: discord.Interaction, nombre_equipo: str):
 @app_commands.checks.has_permissions(administrator=True)
 @app_commands.autocomplete(local=equipo_autocomplete, visitante=equipo_autocomplete)
 async def crear_partido(interaction: discord.Interaction, local: str, visitante: str, jornada: int = 1):
-    await interaction.response.defer()
+    try:
+        await interaction.response.defer()
+    except Exception:
+        pass
+
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
 
@@ -631,7 +682,11 @@ async def crear_partido(interaction: discord.Interaction, local: str, visitante:
 @bot.tree.command(name="subir_replay", description="Carga el resultado y estadísticas de un partido mediante replay.")
 @app_commands.autocomplete(local=equipo_autocomplete, visitante=equipo_autocomplete)
 async def subir_replay(interaction: discord.Interaction, local: str, visitante: str, goles_local: int, goles_visitante: int, mvp: discord.Member, replay_url: str = None):
-    await interaction.response.defer()
+    try:
+        await interaction.response.defer()
+    except Exception:
+        pass
+
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
 
@@ -674,7 +729,11 @@ async def subir_replay(interaction: discord.Interaction, local: str, visitante: 
 
 @bot.tree.command(name="tabla", description="Muestra la tabla de posiciones de la temporada activa.")
 async def tabla(interaction: discord.Interaction):
-    await interaction.response.defer()
+    try:
+        await interaction.response.defer()
+    except Exception:
+        pass
+
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
 
@@ -744,7 +803,11 @@ async def tabla(interaction: discord.Interaction):
     app_commands.Choice(name="Suspensión por Partidos 🚫", value="suspension")
 ])
 async def sancionar(interaction: discord.Interaction, jugador: discord.Member, tipo: str, partidos_suspension: int = 0, motivo: str = "Sin motivo especificado"):
-    await interaction.response.defer()
+    try:
+        await interaction.response.defer()
+    except Exception:
+        pass
+
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
 
@@ -766,7 +829,11 @@ async def sancionar(interaction: discord.Interaction, jugador: discord.Member, t
 
 @bot.tree.command(name="mi_perfil", description="Muestra la ficha y estadísticas del jugador.")
 async def mi_perfil(interaction: discord.Interaction, usuario: discord.Member = None):
-    await interaction.response.defer()
+    try:
+        await interaction.response.defer()
+    except Exception:
+        pass
+
     target = usuario or interaction.user
 
     conn = sqlite3.connect(DB_NAME)
@@ -801,7 +868,10 @@ async def mi_perfil(interaction: discord.Interaction, usuario: discord.Member = 
 @bot.tree.command(name="traspaso", description="Inicia un traspaso formal con firmas requeridas de DTs.")
 @app_commands.autocomplete(equipo_destino=equipo_autocomplete)
 async def traspaso(interaction: discord.Interaction, jugador: discord.Member, equipo_destino: str):
-    await interaction.response.defer()
+    try:
+        await interaction.response.defer()
+    except Exception:
+        pass
 
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
@@ -851,7 +921,11 @@ async def traspaso(interaction: discord.Interaction, jugador: discord.Member, eq
 @bot.tree.command(name="ticket_panel", description="Publica el panel con menú de atención por ticket.")
 @app_commands.checks.has_permissions(administrator=True)
 async def ticket_panel(interaction: discord.Interaction):
-    await interaction.response.defer(ephemeral=True)
+    try:
+        await interaction.response.defer(ephemeral=True)
+    except Exception:
+        pass
+
     menciones_roles = "<@&1538383718459252786> <@&1538390799299911766> <@&1538389985336762448> <@&1538390251414757396>"
 
     mensaje_descripcion = (
@@ -873,6 +947,7 @@ async def ticket_panel(interaction: discord.Interaction):
 # --- EVENTOS DE INICIO ---
 @bot.event
 async def on_ready():
+    # Registrar las vistas persistentes para que sigan activas tras desplegar/reiniciar
     bot.add_view(TicketLaunchView())
     bot.add_view(TicketInteractiveView())
 
