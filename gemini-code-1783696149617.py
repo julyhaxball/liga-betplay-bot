@@ -192,8 +192,12 @@ class TicketInteractiveView(discord.ui.View):
             await interaction.response.defer()
         except Exception:
             pass
+            
         ID_ADMINISTRADOR = 1538389985336762448
-        await interaction.followup.send(f"🔔 <@&{ID_ADMINISTRADOR}>, el usuario {interaction.user.mention} solicita asistencia de un administrador.")
+        ID_FUNDADOR = 1538383718459252786
+        ID_CO_OWNER = 1538390799299911766
+        
+        await interaction.followup.send(f"🔔 <@&{ID_FUNDADOR}> <@&{ID_CO_OWNER}> <@&{ID_ADMINISTRADOR}>, el usuario {interaction.user.mention} solicita asistencia del Staff.")
 
     @discord.ui.button(label="✅ Duda Resuelta (Cerrar)", style=discord.ButtonStyle.success, custom_id="btn_duda_resuelta")
     async def duda_resuelta(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -224,11 +228,11 @@ class TicketSelect(discord.ui.Select):
         )
 
     async def callback(self, interaction: discord.Interaction):
-        # Responder inmediatamente a Discord para evitar que expire la interacción
+        # 1. Responder inmediatamente a la interacción para evitar caducidad
         try:
             await interaction.response.defer(ephemeral=True)
         except Exception:
-            pass
+            return  # Si la interacción ya fue atendida o caducó, se cancela para evitar duplicados
 
         categoria_tipo = self.values[0]
         guild = interaction.guild
@@ -236,20 +240,32 @@ class TicketSelect(discord.ui.Select):
 
         channel_name = f"ticket-{categoria_tipo}-{user.name.lower()}"
         
+        # 2. Control anti-duplicados: verificar si el canal ya existe
         existing_channel = discord.utils.get(guild.channels, name=channel_name)
         if existing_channel:
             await interaction.followup.send(f"❌ Ya tienes un ticket abierto en {existing_channel.mention}", ephemeral=True)
             return
 
+        # IDs de Roles Administrativos
+        ID_FUNDADOR = 1538383718459252786
+        ID_CO_OWNER = 1538390799299911766
         ID_ADMINISTRADOR = 1538389985336762448
+
+        rol_fundador = guild.get_role(ID_FUNDADOR)
+        rol_co_owner = guild.get_role(ID_CO_OWNER)
         rol_admin = guild.get_role(ID_ADMINISTRADOR)
 
+        # Configuración de permisos del canal
         overwrites = {
             guild.default_role: discord.PermissionOverwrite(read_messages=False, view_channel=False),
             user: discord.PermissionOverwrite(read_messages=True, send_messages=True, attach_files=True, view_channel=True),
             guild.me: discord.PermissionOverwrite(read_messages=True, send_messages=True, manage_channels=True, view_channel=True, embed_links=True)
         }
 
+        if rol_fundador:
+            overwrites[rol_fundador] = discord.PermissionOverwrite(read_messages=True, send_messages=True, view_channel=True)
+        if rol_co_owner:
+            overwrites[rol_co_owner] = discord.PermissionOverwrite(read_messages=True, send_messages=True, view_channel=True)
         if rol_admin:
             overwrites[rol_admin] = discord.PermissionOverwrite(read_messages=True, send_messages=True, view_channel=True)
 
@@ -270,7 +286,10 @@ class TicketSelect(discord.ui.Select):
                 color=discord.Color.blue()
             )
 
-            await ticket_channel.send(content=f"{user.mention}", embed=embed, view=TicketInteractiveView(categoria_tipo))
+            # Texto de menciones al crear el ticket (Fundador, Co-Owner, Admin y Usuario)
+            menciones_staff = f"{user.mention} <@&{ID_FUNDADOR}> <@&{ID_CO_OWNER}> <@&{ID_ADMINISTRADOR}>"
+
+            await ticket_channel.send(content=menciones_staff, embed=embed, view=TicketInteractiveView(categoria_tipo))
             await interaction.followup.send(f"✅ Ticket creado correctamente: {ticket_channel.mention}", ephemeral=True)
 
         except Exception as e:
@@ -947,8 +966,8 @@ async def ticket_panel(interaction: discord.Interaction):
 # --- EVENTOS DE INICIO ---
 @bot.event
 async def on_ready():
-    # Registrar las vistas persistentes para que sigan activas tras desplegar/reiniciar
-    bot.add_view(TicketLaunchView())
+    # Únicamente se registra la vista interactiva interna.
+    # NO se registra TicketLaunchView() aquí para prevenir la duplicación de escuchadores globales.
     bot.add_view(TicketInteractiveView())
 
     await bot.change_presence(
