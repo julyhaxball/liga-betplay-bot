@@ -151,7 +151,7 @@ intents.members = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
 # IDs CONFIGURABLES DE TU SERVIDOR
-ID_CANAL_PARTNERS = 123456789012345678  # 👈 Reemplaza con la ID de tu canal público de alianzas
+ID_CANAL_PARTNERS = 123456789012345678  # Reemplaza con la ID de tu canal público de alianzas
 ID_FUNDADOR = 1538383718459252786
 ID_CO_OWNER = 1538390799299911766
 ID_ADMINISTRADOR = 1538389985336762448
@@ -166,7 +166,7 @@ async def equipo_autocomplete(interaction: discord.Interaction, current: str):
     conn.close()
     return [app_commands.Choice(name=eq[0], value=eq[0]) for eq in equipos]
 
-# Función auxiliar segura para borrar canales sin romper el bot (Captura NotFound)
+# Función auxiliar segura para borrar canales capturando NotFound
 async def seguro_borrar_canal(channel):
     if channel:
         try:
@@ -316,7 +316,7 @@ class PostulacionTicketView(discord.ui.View):
         await seguro_borrar_canal(interaction.channel)
 
 
-# ❗ Vista para Reportes (CORREGIDO: style=discord.ButtonStyle.secondary en vez de .warning)
+# ❗ Vista para Reportes (Corregido: Style secondary)
 class ReporteTicketView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
