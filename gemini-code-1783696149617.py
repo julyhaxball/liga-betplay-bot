@@ -166,7 +166,7 @@ async def equipo_autocomplete(interaction: discord.Interaction, current: str):
     conn.close()
     return [app_commands.Choice(name=eq[0], value=eq[0]) for eq in equipos]
 
-# Funciones auxiliares
+# Función auxiliar segura para borrar canales sin romper el bot (Captura NotFound)
 async def seguro_borrar_canal(channel):
     if channel:
         try:
@@ -316,7 +316,7 @@ class PostulacionTicketView(discord.ui.View):
         await seguro_borrar_canal(interaction.channel)
 
 
-# ❗ Vista para Reportes
+# ❗ Vista para Reportes (CORREGIDO: style=discord.ButtonStyle.secondary en vez de .warning)
 class ReporteTicketView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
@@ -375,7 +375,7 @@ class TicketSelect(discord.ui.Select):
             discord.SelectOption(label="Postulaciones", description="Abrir ticket para postularte", emoji="🧑‍💼", value="postulacion"),
             discord.SelectOption(label="Otro", description="Consulta general u otros temas", emoji="❓", value="otro"),
         ]
-        super().__init__(placeholder="Selecciona la opción que necesitas...", min_values=1, max_values=1, custom_id="ticket_main_select_v9")
+        super().__init__(placeholder="Selecciona la opción que necesitas...", min_values=1, max_values=1, custom_id="ticket_main_select_v10")
 
     async def callback(self, interaction: discord.Interaction):
         try:
