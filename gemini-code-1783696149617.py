@@ -200,7 +200,8 @@ class AlianzaModal(discord.ui.Modal, title="📝 Formulario de Alianza"):
 
     async def on_submit(self, interaction: discord.Interaction):
         try:
-            await interaction.response.defer(ephemeral=True)
+            if not interaction.response.is_done():
+                await interaction.response.defer(ephemeral=True)
         except Exception:
             pass
 
@@ -382,7 +383,7 @@ class TicketSelect(discord.ui.Select):
             discord.SelectOption(label="Postulaciones", description="Abrir ticket para postularte", emoji="🧑‍💼", value="postulacion"),
             discord.SelectOption(label="Otro", description="Consulta general u otros temas", emoji="❓", value="otro"),
         ]
-        super().__init__(placeholder="Selecciona la opción que necesitas...", min_values=1, max_values=1, custom_id="ticket_main_select_v10")
+        super().__init__(placeholder="Selecciona la opción que necesitas...", min_values=1, max_values=1, custom_id="ticket_main_select_v11")
 
     async def callback(self, interaction: discord.Interaction):
         try:
