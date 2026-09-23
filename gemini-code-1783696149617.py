@@ -8,17 +8,18 @@ from threading import Thread
 from flask import Flask
 
 import discord
-from discord.ext import commands
 from discord import app_commands
+from discord.ext import commands
 
-# --- BASE DE DATOS Y ESTRUCTURA ---
+# ==========================================
+# --- 1. CONFIGURACIÓN Y BASE DE DATOS -----
+# ==========================================
 DB_NAME = "liga_haxball.db"
 
 def init_db():
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
     
-    # Temporadas
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS temporadas (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -28,7 +29,6 @@ def init_db():
         )
     ''')
     
-    # Equipos
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS equipos (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -40,7 +40,6 @@ def init_db():
         )
     ''')
     
-    # Jugadores
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS jugadores (
             discord_id INTEGER PRIMARY KEY,
@@ -53,7 +52,6 @@ def init_db():
         )
     ''')
     
-    # Partidos / Fixture
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS partidos (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -71,7 +69,6 @@ def init_db():
         )
     ''')
     
-    # Registro de Goles / Estadísticas por Partido
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS goles_partido (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -84,7 +81,6 @@ def init_db():
         )
     ''')
     
-    # Sanciones
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS sanciones (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -97,7 +93,6 @@ def init_db():
         )
     ''')
 
-    # Traspasos
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS historial_traspasos (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -111,7 +106,6 @@ def init_db():
         )
     ''')
 
-    # Museo / Vitrina de Trofeos
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS museo_titulos (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -128,13 +122,16 @@ def init_db():
     conn.commit()
     conn.close()
 
+init_db()
 
-# --- SERVIDOR WEB (KEEP ALIVE RENDER) ---
+# ==========================================
+# --- 2. SERVIDOR WEB (KEEP ALIVE) --------
+# ==========================================
 app = Flask('')
 
 @app.route('/')
 def home():
-    return "Bot de Liga Haxball activo 24/7"
+    return "Bot de Liga Haxball (Vanta League) activo 24/7"
 
 def run_web():
     port = int(os.environ.get("PORT", 10000))
@@ -144,17 +141,23 @@ def keep_alive():
     t = Thread(target=run_web)
     t.start()
 
-init_db()
-
-# --- CONFIGURACIÓN DEL BOT ---
+# ==========================================
+# --- 3. CONFIGURACIÓN Y CONSTANTES --------
+# ==========================================
 intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
+# IDs CONFIGURABLES DE TU SERVIDOR
+ID_CANAL_PARTNERS = 123456789012345678  # 👈 Reemplaza por el ID del canal donde se publican las alianzas
+ID_FUNDADOR = 1538383718459252786
+ID_CO_OWNER = 1538390799299911766
+ID_ADMINISTRADOR = 1538389985336762448
+ID_ROL_PARTNER = 1538390251414757396
 
-# --- AUTOCOMPLETADO GLOBAL ---
+# AUTOCOMPLETADO GLOBAL DE EQUIPOS
 async def equipo_autocomplete(interaction: discord.Interaction, current: str):
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
@@ -163,137 +166,276 @@ async def equipo_autocomplete(interaction: discord.Interaction, current: str):
     conn.close()
     return [app_commands.Choice(name=eq[0], value=eq[0]) for eq in equipos]
 
+# ==========================================
+# --- 4. MODALES Y VISTAS DE TICKETS -------
+# ==========================================
 
-# --- VISTA INTERACTIVA DENTRO DEL TICKET ---
-class TicketInteractiveView(discord.ui.View):
-    def __init__(self, categoria_tipo: str = "otro"):
+# 📝 Modal para que el socio ingrese su plantilla de Alianza directamente en un cuadro en pantalla
+class AlianzaModal(discord.ui.Modal, title="📝 Formulario de Alianza"):
+    nombre_comunidad = discord.ui.TextInput(
+        label="Nombre de tu Comunidad/Liga",
+        placeholder="Ej. Liga Sombra Haxball",
+        required=True
+    )
+    miembros = discord.ui.TextInput(
+        label="Cantidad aproximada de miembros",
+        placeholder="Ej. 250 miembros",
+        required=True
+    )
+    invitacion = discord.ui.TextInput(
+        label="Link de Invitación a tu Discord",
+        placeholder="https://discord.gg/ejemplo",
+        required=True
+    )
+    propuesta = discord.ui.TextInput(
+        label="Detalles / Tipo de Alianza",
+        style=discord.TextStyle.paragraph,
+        placeholder="Ej. Ping x Ping en canal oficial, Banner rotatorio, etc.",
+        required=True
+    )
+
+    async def on_submit(self, interaction: discord.Interaction):
+        await interaction.response.defer()
+
+        await interaction.followup.send(
+            f"✅ **Plantilla recibida correctamente.**\n"
+            f"La propuesta de **{self.nombre_comunidad.value}** ha sido procesada y publicada en el canal de alianzas."
+        )
+
+        canal_partners = interaction.guild.get_channel(ID_CANAL_PARTNERS)
+        if canal_partners:
+            embed_alianza = discord.Embed(
+                title=f"🤝 ¡NUEVA ALIANZA CONFIRMADA! - {self.nombre_comunidad.value}",
+                description=(
+                    f"👥 **Miembros:** {self.miembros.value}\n"
+                    f"🔗 **Servidor:** {self.invitacion.value}\n\n"
+                    f"📜 **Propuesta:**\n{self.propuesta.value}\n\n"
+                    f"👤 **Representante:** {interaction.user.mention}"
+                ),
+                color=discord.Color.purple()
+            )
+            await canal_partners.send(content=f"<@&{ID_ROL_PARTNER}>", embed=embed_alianza)
+
+
+# 🤝 Vista de botones dentro del ticket de Alianza
+class AlianzaTicketView(discord.ui.View):
+    def __init__(self):
         super().__init__(timeout=None)
-        self.categoria_tipo = categoria_tipo
 
-    @discord.ui.button(label="📌 Ver información / FAQ", style=discord.ButtonStyle.primary, custom_id="btn_faq_ticket")
-    async def ver_faq(self, interaction: discord.Interaction, button: discord.ui.Button):
-        try:
-            await interaction.response.defer(ephemeral=True)
-        except Exception:
-            pass
+    @discord.ui.button(label="📝 Rellenar Plantilla de Alianza", style=discord.ButtonStyle.success, custom_id="btn_abrir_modal_alianza")
+    async def abrir_modal(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_modal(AlianzaModal())
 
-        respuestas = {
-            "alianza": "🤝 **Requisitos de Alianza:**\n- Contar con al menos 100 miembros activos.\n- Servidor organizado de Haxball o eSports.\n- Para concretar, presiona **Llamar al Staff** y déjanos el enlace de tu servidor.",
-            "reporte": "❗ **Para realizar un reporte:**\n- Adjunta captura de pantalla o video de la infracción.\n- Indica el nombre/ID del usuario reportado y la regla incumplida.",
-            "postulacion": "🧑‍💼 **Postulaciones abiertas:**\n- Para Admin / Periodista / Creador de contenido.\n- Deja tus datos: Edad, experiencia previa y disponibilidad de tiempo.",
-            "otro": "❓ **Consulta general:**\n- Por favor escribe tu duda detalladamente aquí en el canal."
-        }
-        info = respuestas.get(self.categoria_tipo, "Escribe tu duda detalladamente en este canal.")
-        await interaction.followup.send(f"ℹ️ **Información Automática:**\n\n{info}", ephemeral=True)
-
-    @discord.ui.button(label="🔔 Llamar al Staff", style=discord.ButtonStyle.danger, custom_id="btn_llamar_staff")
+    @discord.ui.button(label="🔔 Llamar al Staff", style=discord.ButtonStyle.secondary, custom_id="btn_llamar_staff_alianza")
     async def llamar_staff(self, interaction: discord.Interaction, button: discord.ui.Button):
-        try:
-            await interaction.response.defer()
-        except Exception:
-            pass
-            
-        ID_ADMINISTRADOR = 1538389985336762448
-        ID_FUNDADOR = 1538383718459252786
-        ID_CO_OWNER = 1538390799299911766
-        
-        await interaction.followup.send(f"🔔 <@&{ID_FUNDADOR}> <@&{ID_CO_OWNER}> <@&{ID_ADMINISTRADOR}>, el usuario {interaction.user.mention} solicita asistencia del Staff.")
+        await interaction.response.send_message(
+            f"🔔 <@&{ID_FUNDADOR}> <@&{ID_CO_OWNER}> <@&{ID_ADMINISTRADOR}>, el usuario {interaction.user.mention} requiere atención.",
+            ephemeral=False
+        )
 
-    @discord.ui.button(label="✅ Duda Resuelta (Cerrar)", style=discord.ButtonStyle.success, custom_id="btn_duda_resuelta")
-    async def duda_resuelta(self, interaction: discord.Interaction, button: discord.ui.Button):
-        try:
-            await interaction.response.defer()
-        except Exception:
-            pass
-        await interaction.followup.send("✅ ¡Nos alegra haberte ayudado! Este ticket se cerrará y eliminará en 5 segundos...")
+    @discord.ui.button(label="🔒 Cerrar Ticket", style=discord.ButtonStyle.danger, custom_id="btn_cerrar_ticket_alianza")
+    async def cerrar_ticket(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_message("🔒 Cerrando ticket en 5 segundos...")
         await asyncio.sleep(5)
         await interaction.channel.delete()
 
 
-# --- PANEL INICIAL Y SELECTOR DE TICKETS ---
+# 🧑‍💼 Menú Desplegable (Select) para elegir puesto en Postulaciones
+class PostulacionSelect(discord.ui.Select):
+    def __init__(self):
+        options = [
+            discord.SelectOption(label="Administrador", description="Postularte para Admin de la liga", emoji="🛡️", value="admin"),
+            discord.SelectOption(label="Diseñador Gráfico", description="Postularte para hacer banners/creativos", emoji="🎨", value="disenador"),
+            discord.SelectOption(label="Moderador / Periodista", description="Postularte para moderar o redactar", emoji="📰", value="moderador"),
+        ]
+        super().__init__(placeholder="Selecciona el cargo al que deseas postularte...", min_values=1, max_values=1, custom_id="select_postulacion_cargo")
+
+    async def callback(self, interaction: discord.Interaction):
+        cargo = self.values[0]
+        
+        preguntas = {
+            "admin": (
+                "🛡️ **POSTULACIÓN A ADMINISTRADOR**\n"
+                "Responde lo siguiente en este chat:\n"
+                "1. ¿Qué edad tienes y de qué país eres?\n"
+                "2. ¿Tienes experiencia previa administrando ligas de Haxball?\n"
+                "3. ¿Cuánto tiempo diario puedes dedicar a la liga?"
+            ),
+            "disenador": (
+                "🎨 **POSTULACIÓN A DISEÑADOR**\n"
+                "Responde lo siguiente en este chat:\n"
+                "1. Adjunta 2 o 3 trabajos/banners previos realizados por ti.\n"
+                "2. ¿Qué programas manejas (Photoshop, Canva, Illustrator, etc.)?\n"
+                "3. ¿Tienes disponibilidad para entregas rápidas de fechas/tablas?"
+            ),
+            "moderador": (
+                "📰 **POSTULACIÓN A MODERADOR / PERIODISTA**\n"
+                "Responde lo siguiente en este chat:\n"
+                "1. ¿Qué función prefieres: Moderación de chat o Redacción de noticias/resúmenes?\n"
+                "2. ¿En qué horarios estás más activo en Discord?\n"
+                "3. ¿Cómo reaccionas ante un conflicto en el chat?"
+            )
+        }
+
+        await interaction.response.send_message(f"🤖 **Preguntas para {cargo.capitalize()}:**\n\n{preguntas[cargo]}")
+
+
+class PostulacionTicketView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+        self.add_item(PostulacionSelect())
+
+    @discord.ui.button(label="🔒 Cerrar Ticket", style=discord.ButtonStyle.danger, custom_id="btn_cerrar_postulacion", row=1)
+    async def cerrar_ticket(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_message("🔒 Cerrando ticket en 5 segundos...")
+        await asyncio.sleep(5)
+        await interaction.channel.delete()
+
+
+# ❗ Vista para Reportes
+class ReporteTicketView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(label="🔔 Re-notificar al Staff", style=discord.ButtonStyle.warning, custom_id="btn_re_llamar_staff")
+    async def re_llamar_staff(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_message(
+            f"⚠️ **Atención Staff:** <@&{ID_FUNDADOR}> <@&{ID_CO_OWNER}> <@&{ID_ADMINISTRADOR}>, el usuario {interaction.user.mention} solicita asistencia inmediata.",
+            ephemeral=False
+        )
+
+    @discord.ui.button(label="🔒 Cerrar Ticket", style=discord.ButtonStyle.danger, custom_id="btn_cerrar_reporte")
+    async def cerrar_ticket(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_message("🔒 Cerrando ticket en 5 segundos...")
+        await asyncio.sleep(5)
+        await interaction.channel.delete()
+
+
+# 🎫 Menú Desplegable Principal del Panel de Tickets
 class TicketSelect(discord.ui.Select):
     def __init__(self):
         options = [
-            discord.SelectOption(label="Alianzas", description="Hacer una alianza con nosotros", emoji="🤝", value="alianza"),
-            discord.SelectOption(label="Reportes", description="Reportar algo que no sea apto", emoji="❗", value="reporte"),
-            discord.SelectOption(label="Postulaciones", description="Postularse para ser admin, periodista, etc.", emoji="🧑‍💼", value="postulacion"),
-            discord.SelectOption(label="Otro", description="Algo distinto al resto", emoji="❓", value="otro"),
+            discord.SelectOption(label="Alianzas", description="Abrir ticket para alianzas", emoji="🤝", value="alianza"),
+            discord.SelectOption(label="Reportes", description="Abrir ticket para reportes", emoji="❗", value="reporte"),
+            discord.SelectOption(label="Postulaciones", description="Abrir ticket para postularte", emoji="🧑‍💼", value="postulacion"),
+            discord.SelectOption(label="Otro", description="Consulta general u otros temas", emoji="❓", value="otro"),
         ]
-        super().__init__(
-            placeholder="Selecciona el tipo de ticket que deseas abrir...",
-            min_values=1,
-            max_values=1,
-            options=options,
-            custom_id="ticket_select_menu_v5"
-        )
+        super().__init__(placeholder="Selecciona la opción que necesitas...", min_values=1, max_values=1, custom_id="ticket_main_select_v8")
 
     async def callback(self, interaction: discord.Interaction):
-        # 1. Responder inmediatamente a la interacción para evitar caducidad
         try:
             await interaction.response.defer(ephemeral=True)
         except Exception:
-            return  # Si la interacción ya fue atendida o caducó, se cancela para evitar duplicados
+            return
 
         categoria_tipo = self.values[0]
         guild = interaction.guild
         user = interaction.user
-
         channel_name = f"ticket-{categoria_tipo}-{user.name.lower()}"
-        
-        # 2. Control anti-duplicados: verificar si el canal ya existe
+
         existing_channel = discord.utils.get(guild.channels, name=channel_name)
         if existing_channel:
             await interaction.followup.send(f"❌ Ya tienes un ticket abierto en {existing_channel.mention}", ephemeral=True)
             return
 
-        # IDs de Roles Administrativos
-        ID_FUNDADOR = 1538383718459252786
-        ID_CO_OWNER = 1538390799299911766
-        ID_ADMINISTRADOR = 1538389985336762448
-
         rol_fundador = guild.get_role(ID_FUNDADOR)
         rol_co_owner = guild.get_role(ID_CO_OWNER)
         rol_admin = guild.get_role(ID_ADMINISTRADOR)
 
-        # Configuración de permisos del canal
         overwrites = {
             guild.default_role: discord.PermissionOverwrite(read_messages=False, view_channel=False),
             user: discord.PermissionOverwrite(read_messages=True, send_messages=True, attach_files=True, view_channel=True),
-            guild.me: discord.PermissionOverwrite(read_messages=True, send_messages=True, manage_channels=True, view_channel=True, embed_links=True)
+            guild.me: discord.PermissionOverwrite(read_messages=True, send_messages=True, manage_channels=True, view_channel=True)
         }
 
-        if rol_fundador:
-            overwrites[rol_fundador] = discord.PermissionOverwrite(read_messages=True, send_messages=True, view_channel=True)
-        if rol_co_owner:
-            overwrites[rol_co_owner] = discord.PermissionOverwrite(read_messages=True, send_messages=True, view_channel=True)
-        if rol_admin:
-            overwrites[rol_admin] = discord.PermissionOverwrite(read_messages=True, send_messages=True, view_channel=True)
+        if rol_fundador: overwrites[rol_fundador] = discord.PermissionOverwrite(read_messages=True, send_messages=True, view_channel=True)
+        if rol_co_owner: overwrites[rol_co_owner] = discord.PermissionOverwrite(read_messages=True, send_messages=True, view_channel=True)
+        if rol_admin: overwrites[rol_admin] = discord.PermissionOverwrite(read_messages=True, send_messages=True, view_channel=True)
 
         target_category = interaction.channel.category or discord.utils.get(guild.categories, name="📁 TICKETS")
         if not target_category:
             target_category = await guild.create_category("📁 TICKETS")
 
-        try:
-            ticket_channel = await guild.create_text_channel(
-                name=channel_name,
-                category=target_category,
-                overwrites=overwrites
+        ticket_channel = await guild.create_text_channel(name=channel_name, category=target_category, overwrites=overwrites)
+
+        # 🤝 ALIANZAS
+        if categoria_tipo == "alianza":
+            plantilla_vanta = (
+                "╔════════════════════════════════════════════╗ V A N T A  L E A G U E \n"
+                "╚════════════════════════════════════════════╝\n"
+                "         COMPETITION HAS NO LIMITS \n"
+                "◢━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━◣\n\n"
+                "       INSCRIPCIONES ABIERTAS \n"
+                "         NUEVA LIGA DE HAXBALL\n\n"
+                "    HAXBALL • X5\n"
+                "    COMPETENCIA INTERNACIONAL\n"
+                "    PRIMERA TEMPORADA (SEASON 1)\n"
+                "◥━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━◤\n"
+                "╭──────────────  ──────────────╮\n\n"
+                "     UNA NUEVA ERA COMIENZA\n"
+                "     INICIA LA COPA / TEMPORADA 1\n"
+                "     REGISTRA A TU EQUIPO YA\n"
+                "     COMUNIDAD INTERNACIONAL\n"
+                "╰────────────────────────────────╯\n"
+                "◢━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━◣\n\n"
+                "     INSCRIBE A TU EQUIPO AHORA\n"
+                "Buscamos a los mejores clubes y DTs que quieran demostrar su nivel en la cancha "
+                "y escribir su nombre en la historia de Vanta. Mínimo 10 - Máximo 20 Jugadores Formato Oficial X5 Torneo Altamente Competitivo\n"
+                "◥━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━◤\n"
+                "╭────────────── ✦ ──────────────╮\n\n"
+                "    ¿POR QUÉ INSCRIBIRTE EN VANTA? Competición organizada y seria Tabla de posiciones y goleadores Cobertura y transmisiones Difusión de tu club Respeto y fair play\n"
+                "╰────────────────────────────────╯\n"
+                "◢━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━◣\n\n"
+                "     EL TERRENO DE JUEGO ESTÁ LISTO\n\n"
+                "   ¿TIENES LO NECESARIO PARA DOMINAR?\n\n"
+                "    INSCRÍBETE • COMPITE • SÉ EL CAMPEÓN \n"
+                "◥━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━◤ ENLACE DEL SERVIDOR DE DISCORD\n"
+                "[PONE AQUÍ TU INVITACIÓN DE DISCORD]\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+                "       「 NO VENIMOS A SER UNA MÁS 」\n\n"
+                "              VENIMOS A HACER HISTORIA.\n"
+                "◢◤◢◤◢◤◢◤◢◤◢◤◢◤◢◤◢◤◢◤\n"
+                "https://discord.gg/6tJcG5qqvf"
             )
 
-            embed = discord.Embed(
-                title=f"🎫 Ticket de {categoria_tipo.capitalize()}",
-                description=f"Hola {user.mention}.\n\nUsa los botones interactivos de abajo para consultar información rápida, solicitar la ayuda del Staff o cerrar la consulta si tu duda queda resuelta.",
-                color=discord.Color.blue()
+            await ticket_channel.send(content=plantilla_vanta)
+            await ticket_channel.send(
+                content=f"👋 ¡Hola {user.mention}! Arriba tienes nuestra plantilla oficial.\n"
+                        "Haz clic en el botón verde **'Rellenar Plantilla de Alianza'** para ingresar los datos de tu comunidad en el formulario interactivo.",
+                view=AlianzaTicketView()
             )
 
-            # Texto de menciones al crear el ticket (Fundador, Co-Owner, Admin y Usuario)
-            menciones_staff = f"{user.mention} <@&{ID_FUNDADOR}> <@&{ID_CO_OWNER}> <@&{ID_ADMINISTRADOR}>"
+        # ❗ REPORTES (Notificación inmediata al Staff)
+        elif categoria_tipo == "reporte":
+            menciones_staff = f"<@&{ID_FUNDADOR}> <@&{ID_CO_OWNER}> <@&{ID_ADMINISTRADOR}>"
+            embed_reporte = discord.Embed(
+                title="❗ SISTEMA DE REPORTES",
+                description=(
+                    f"¡Hola {user.mention}!\n\n"
+                    "Por favor, redacta los detalles de tu reporte en este chat con la siguiente plantilla:\n"
+                    "• **Usuario / Equipo reportado:**\n"
+                    "• **Infracción cometida:**\n"
+                    "• **Pruebas (Capturas / Link del Replay):**\n\n"
+                    "🚨 **El Staff ha sido notificado automáticamente y acudirá en breve.**"
+                ),
+                color=discord.Color.red()
+            )
+            await ticket_channel.send(content=menciones_staff, embed=embed_reporte, view=ReporteTicketView())
 
-            await ticket_channel.send(content=menciones_staff, embed=embed, view=TicketInteractiveView(categoria_tipo))
-            await interaction.followup.send(f"✅ Ticket creado correctamente: {ticket_channel.mention}", ephemeral=True)
+        # 🧑‍💼 POSTULACIONES
+        elif categoria_tipo == "postulacion":
+            await ticket_channel.send(
+                content=f"👋 ¡Hola {user.mention}! Selecciona en el menú desplegable el puesto al que deseas postularte:",
+                view=PostulacionTicketView()
+            )
 
-        except Exception as e:
-            await interaction.followup.send(f"❌ Error al crear el ticket: {e}", ephemeral=True)
+        # ❓ OTRO
+        else:
+            await ticket_channel.send(
+                content=f"👋 ¡Hola {user.mention}! Por favor, describe tu consulta detalladamente en este canal."
+            )
+
+        await interaction.followup.send(f"✅ Ticket creado correctamente: {ticket_channel.mention}", ephemeral=True)
 
 
 class TicketLaunchView(discord.ui.View):
@@ -302,7 +444,9 @@ class TicketLaunchView(discord.ui.View):
         self.add_item(TicketSelect())
 
 
-# --- TRASPASOS E INTERACCIONES ---
+# ==========================================
+# --- 5. MÓDULO DE TRASPASOS INTERACTIVOS --
+# ==========================================
 class TraspasoFirmasView(discord.ui.View):
     def __init__(self, jugador, eq_origen_nombre, eq_destino_nombre, dt_origen_id, dt_destino_id, eq_origen_id, eq_destino_id, rol_origen_id, rol_destino_id):
         super().__init__(timeout=86400)
@@ -328,7 +472,6 @@ class TraspasoFirmasView(discord.ui.View):
     def generar_embed(self):
         f_orig_str = "✅ Firmado / No Requerido" if self.firma_origen else "⏳ Pendiente de firma"
         f_dest_str = "✅ Firmado" if self.firma_destino else "⏳ Pendiente de firma"
-        
         orig_val = self.eq_origen_nombre if self.eq_origen_nombre else "Agente Libre"
 
         embed = discord.Embed(
@@ -341,15 +484,13 @@ class TraspasoFirmasView(discord.ui.View):
         embed.add_field(name="\u200b", value="\u200b", inline=False)
         embed.add_field(name="Firma DT Origen", value=f_orig_str, inline=True)
         embed.add_field(name="Firma DT Destino", value=f_dest_str, inline=True)
-        embed.set_footer(text="Ambos DTs autorizados deben confirmar con los botones correspondientes.")
+        embed.set_footer(text="Ambos DTs autorizados deben confirmar mediante los botones.")
         return embed
 
     @discord.ui.button(label="✍️ Firmar (DT Origen)", style=discord.ButtonStyle.secondary, custom_id="firma_dt_origen")
     async def firmar_origen(self, interaction: discord.Interaction, button: discord.ui.Button):
-        try:
-            await interaction.response.defer()
-        except Exception:
-            pass
+        try: await interaction.response.defer()
+        except Exception: pass
 
         if not self.dt_origen_id:
             await interaction.followup.send("❌ El jugador no tenía equipo previo.", ephemeral=True)
@@ -369,10 +510,8 @@ class TraspasoFirmasView(discord.ui.View):
 
     @discord.ui.button(label="✍️ Firmar (DT Destino)", style=discord.ButtonStyle.primary, custom_id="firma_dt_destino")
     async def firmar_destino(self, interaction: discord.Interaction, button: discord.ui.Button):
-        try:
-            await interaction.response.defer()
-        except Exception:
-            pass
+        try: await interaction.response.defer()
+        except Exception: pass
 
         if interaction.user.id != self.dt_destino_id:
             await interaction.followup.send("❌ Solo el DT de destino puede firmar.", ephemeral=True)
@@ -424,17 +563,17 @@ class TraspasoFirmasView(discord.ui.View):
             await interaction.message.edit(embed=embed_final, view=self)
 
 
-# --- MUSEO / VITRINA DE TROFEOS ---
+# ==========================================
+# --- 6. MÓDULO MUSEO / VITRINA DE TROFEOS -
+# ==========================================
 class MuseoSelect(discord.ui.Select):
     def __init__(self, equipos):
         options = [discord.SelectOption(label=eq[1], value=str(eq[0]), emoji="🏛️") for eq in equipos]
         super().__init__(placeholder="Selecciona un equipo para consultar su vitrina...", options=options)
 
     async def callback(self, interaction: discord.Interaction):
-        try:
-            await interaction.response.defer(ephemeral=True)
-        except Exception:
-            pass
+        try: await interaction.response.defer(ephemeral=True)
+        except Exception: pass
 
         equipo_id = int(self.values[0])
 
@@ -495,10 +634,8 @@ class MuseoGroup(app_commands.Group):
     @app_commands.checks.has_permissions(administrator=True)
     @app_commands.autocomplete(equipo=equipo_autocomplete)
     async def add_titulo(self, interaction: discord.Interaction, equipo: str, titulo: str, temporada: str = None, detalles: str = None):
-        try:
-            await interaction.response.defer()
-        except Exception:
-            pass
+        try: await interaction.response.defer()
+        except Exception: pass
 
         conn = sqlite3.connect(DB_NAME)
         cursor = conn.cursor()
@@ -521,10 +658,8 @@ class MuseoGroup(app_commands.Group):
 
     @app_commands.command(name="ver", description="Abre el menú interactivo para ver trofeos.")
     async def ver(self, interaction: discord.Interaction):
-        try:
-            await interaction.response.defer(ephemeral=True)
-        except Exception:
-            pass
+        try: await interaction.response.defer(ephemeral=True)
+        except Exception: pass
 
         conn = sqlite3.connect(DB_NAME)
         cursor = conn.cursor()
@@ -542,8 +677,9 @@ class MuseoGroup(app_commands.Group):
 
 bot.tree.add_command(MuseoGroup())
 
-
-# --- GRUPO DE TEMPORADAS ---
+# ==========================================
+# --- 7. MÓDULO DE TEMPORADAS --------------
+# ==========================================
 class SeasonGroup(app_commands.Group):
     def __init__(self):
         super().__init__(name="season", description="Módulo de gestión de temporadas")
@@ -551,10 +687,8 @@ class SeasonGroup(app_commands.Group):
     @app_commands.command(name="create", description="Crea una nueva temporada")
     @app_commands.checks.has_permissions(administrator=True)
     async def season_create(self, interaction: discord.Interaction, nombre: str):
-        try:
-            await interaction.response.defer()
-        except Exception:
-            pass
+        try: await interaction.response.defer()
+        except Exception: pass
 
         conn = sqlite3.connect(DB_NAME)
         cursor = conn.cursor()
@@ -570,10 +704,8 @@ class SeasonGroup(app_commands.Group):
     @app_commands.command(name="start", description="Activa la temporada más reciente")
     @app_commands.checks.has_permissions(administrator=True)
     async def season_start(self, interaction: discord.Interaction):
-        try:
-            await interaction.response.defer()
-        except Exception:
-            pass
+        try: await interaction.response.defer()
+        except Exception: pass
 
         conn = sqlite3.connect(DB_NAME)
         cursor = conn.cursor()
@@ -594,15 +726,14 @@ class SeasonGroup(app_commands.Group):
 
 bot.tree.add_command(SeasonGroup())
 
-
-# --- GESTIÓN DE EQUIPOS Y FIXTURE ---
+# ==========================================
+# --- 8. COMANDOS DE LIGA & ADMINISTRACIÓN -
+# ==========================================
 @bot.tree.command(name="inscribir_equipo", description="Inscribe un equipo y crea su rol en el servidor.")
 @app_commands.checks.has_permissions(administrator=True)
 async def inscribir_equipo(interaction: discord.Interaction, nombre_equipo: str, dt: discord.Member):
-    try:
-        await interaction.response.defer()
-    except Exception:
-        pass
+    try: await interaction.response.defer()
+    except Exception: pass
 
     guild = interaction.guild
     rol = await guild.create_role(name=nombre_equipo, reason="Rol oficial de equipo Haxball")
@@ -623,14 +754,11 @@ async def inscribir_equipo(interaction: discord.Interaction, nombre_equipo: str,
 @app_commands.checks.has_permissions(administrator=True)
 @app_commands.autocomplete(nombre_equipo=equipo_autocomplete)
 async def borrar_equipo(interaction: discord.Interaction, nombre_equipo: str):
-    try:
-        await interaction.response.defer()
-    except Exception:
-        pass
+    try: await interaction.response.defer()
+    except Exception: pass
 
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
-    
     cursor.execute("SELECT id, rol_id FROM equipos WHERE nombre = ?", (nombre_equipo,))
     equipo = cursor.fetchone()
 
@@ -640,13 +768,10 @@ async def borrar_equipo(interaction: discord.Interaction, nombre_equipo: str):
         return
 
     equipo_id, rol_id = equipo
-
     rol = interaction.guild.get_role(rol_id)
     if rol:
-        try:
-            await rol.delete(reason="Equipo borrado por administrador")
-        except discord.HTTPException:
-            pass
+        try: await rol.delete(reason="Equipo borrado por administrador")
+        except discord.HTTPException: pass
 
     cursor.execute("UPDATE jugadores SET equipo_id = NULL WHERE equipo_id = ?", (equipo_id,))
     cursor.execute("DELETE FROM partidos WHERE equipo_local_id = ? OR equipo_visitante_id = ?", (equipo_id, equipo_id))
@@ -662,10 +787,8 @@ async def borrar_equipo(interaction: discord.Interaction, nombre_equipo: str):
 @app_commands.checks.has_permissions(administrator=True)
 @app_commands.autocomplete(local=equipo_autocomplete, visitante=equipo_autocomplete)
 async def crear_partido(interaction: discord.Interaction, local: str, visitante: str, jornada: int = 1):
-    try:
-        await interaction.response.defer()
-    except Exception:
-        pass
+    try: await interaction.response.defer()
+    except Exception: pass
 
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
@@ -696,15 +819,11 @@ async def crear_partido(interaction: discord.Interaction, local: str, visitante:
 
     await interaction.followup.send(f"⚽ Partido registrado (Jornada {jornada}): **{local}** vs **{visitante}**.")
 
-
-# --- ESTADÍSTICAS Y REPLAYS ---
 @bot.tree.command(name="subir_replay", description="Carga el resultado y estadísticas de un partido mediante replay.")
 @app_commands.autocomplete(local=equipo_autocomplete, visitante=equipo_autocomplete)
 async def subir_replay(interaction: discord.Interaction, local: str, visitante: str, goles_local: int, goles_visitante: int, mvp: discord.Member, replay_url: str = None):
-    try:
-        await interaction.response.defer()
-    except Exception:
-        pass
+    try: await interaction.response.defer()
+    except Exception: pass
 
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
@@ -748,10 +867,8 @@ async def subir_replay(interaction: discord.Interaction, local: str, visitante: 
 
 @bot.tree.command(name="tabla", description="Muestra la tabla de posiciones de la temporada activa.")
 async def tabla(interaction: discord.Interaction):
-    try:
-        await interaction.response.defer()
-    except Exception:
-        pass
+    try: await interaction.response.defer()
+    except Exception: pass
 
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
@@ -799,11 +916,9 @@ async def tabla(interaction: discord.Interaction):
         })
 
     conn.close()
-
     tabla_datos.sort(key=lambda x: (x["pts"], x["dg"], x["gf"]), reverse=True)
 
     embed = discord.Embed(title=f"🏆 Tabla de Posiciones: {temp[1]}", color=discord.Color.gold())
-    
     encabezado = "`Pos | Equipo          | PTS | PJ | PG | PE | PP | DG`"
     lineas = []
     for idx, t in enumerate(tabla_datos, 1):
@@ -812,8 +927,6 @@ async def tabla(interaction: discord.Interaction):
     embed.description = f"{encabezado}\n" + "\n".join(lineas) if lineas else "No se han disputado partidos todavía."
     await interaction.followup.send(embed=embed)
 
-
-# --- SANCIONES Y PERFIL ---
 @bot.tree.command(name="sancionar", description="Aplica una sanción a un jugador (Admin).")
 @app_commands.checks.has_permissions(administrator=True)
 @app_commands.choices(tipo=[
@@ -822,14 +935,11 @@ async def tabla(interaction: discord.Interaction):
     app_commands.Choice(name="Suspensión por Partidos 🚫", value="suspension")
 ])
 async def sancionar(interaction: discord.Interaction, jugador: discord.Member, tipo: str, partidos_suspension: int = 0, motivo: str = "Sin motivo especificado"):
-    try:
-        await interaction.response.defer()
-    except Exception:
-        pass
+    try: await interaction.response.defer()
+    except Exception: pass
 
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
-
     cursor.execute(
         "INSERT INTO sanciones (jugador_id, tipo, partidos_suspension, motivo) VALUES (?, ?, ?, ?)",
         (jugador.id, tipo, partidos_suspension, motivo)
@@ -848,10 +958,8 @@ async def sancionar(interaction: discord.Interaction, jugador: discord.Member, t
 
 @bot.tree.command(name="mi_perfil", description="Muestra la ficha y estadísticas del jugador.")
 async def mi_perfil(interaction: discord.Interaction, usuario: discord.Member = None):
-    try:
-        await interaction.response.defer()
-    except Exception:
-        pass
+    try: await interaction.response.defer()
+    except Exception: pass
 
     target = usuario or interaction.user
 
@@ -882,15 +990,11 @@ async def mi_perfil(interaction: discord.Interaction, usuario: discord.Member = 
 
     await interaction.followup.send(embed=embed)
 
-
-# --- COMANDOS TRASPASOS & PANEL DE TICKETS ---
 @bot.tree.command(name="traspaso", description="Inicia un traspaso formal con firmas requeridas de DTs.")
 @app_commands.autocomplete(equipo_destino=equipo_autocomplete)
 async def traspaso(interaction: discord.Interaction, jugador: discord.Member, equipo_destino: str):
-    try:
-        await interaction.response.defer()
-    except Exception:
-        pass
+    try: await interaction.response.defer()
+    except Exception: pass
 
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
@@ -940,12 +1044,10 @@ async def traspaso(interaction: discord.Interaction, jugador: discord.Member, eq
 @bot.tree.command(name="ticket_panel", description="Publica el panel con menú de atención por ticket.")
 @app_commands.checks.has_permissions(administrator=True)
 async def ticket_panel(interaction: discord.Interaction):
-    try:
-        await interaction.response.defer(ephemeral=True)
-    except Exception:
-        pass
+    try: await interaction.response.defer(ephemeral=True)
+    except Exception: pass
 
-    menciones_roles = "<@&1538383718459252786> <@&1538390799299911766> <@&1538389985336762448> <@&1538390251414757396>"
+    menciones_roles = f"<@&{ID_FUNDADOR}> <@&{ID_CO_OWNER}> <@&{ID_ADMINISTRADOR}> <@&{ID_ROL_PARTNER}>"
 
     mensaje_descripcion = (
         "📢 **HORARIO DE ATENCIÓN DE TICKETS**\n\n"
@@ -962,17 +1064,19 @@ async def ticket_panel(interaction: discord.Interaction):
     await interaction.channel.send(content=menciones_roles, embed=embed, view=TicketLaunchView())
     await interaction.followup.send("✅ Panel publicado correctamente.", ephemeral=True)
 
-
-# --- EVENTOS DE INICIO ---
+# ==========================================
+# --- 9. EVENTOS Y ARRANQUE DEL BOT --------
+# ==========================================
 @bot.event
 async def on_ready():
-    # Únicamente se registra la vista interactiva interna.
-    # NO se registra TicketLaunchView() aquí para prevenir la duplicación de escuchadores globales.
-    bot.add_view(TicketInteractiveView())
+    bot.add_view(TicketLaunchView())
+    bot.add_view(AlianzaTicketView())
+    bot.add_view(PostulacionTicketView())
+    bot.add_view(ReporteTicketView())
 
     await bot.change_presence(
         status=discord.Status.online,
-        activity=discord.Game(name="Liga Haxball | /tabla")
+        activity=discord.Game(name="Vanta League | /tabla")
     )
 
     try:
@@ -981,14 +1085,12 @@ async def on_ready():
     except Exception as e:
         print(f"Error en la sincronización: {e}")
 
-    print(f"🤖 Bot encendido como {bot.user}")
+    print(f"🤖 Bot encendido correctamente como {bot.user}")
 
-
-# --- EJECUCIÓN GENERAL ---
 if __name__ == "__main__":
     keep_alive()
     TOKEN = os.environ.get("DISCORD_TOKEN")
     if TOKEN:
         bot.run(TOKEN)
     else:
-        print("❌ Error: Asigna la variable de entorno 'DISCORD_TOKEN'.")
+        print("❌ Error: Falta asignar la variable de entorno 'DISCORD_TOKEN'.")
