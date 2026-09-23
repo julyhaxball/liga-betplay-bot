@@ -151,7 +151,7 @@ intents.members = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
 # IDs CONFIGURABLES DE TU SERVIDOR
-ID_CANAL_PARTNERS = 123456789012345678  # 👈 Reemplaza por el ID del canal donde se publican las alianzas
+ID_CANAL_PARTNERS = 123456789012345678  # 👈 Reemplaza con la ID de tu canal público de alianzas
 ID_FUNDADOR = 1538383718459252786
 ID_CO_OWNER = 1538390799299911766
 ID_ADMINISTRADOR = 1538389985336762448
@@ -166,11 +166,19 @@ async def equipo_autocomplete(interaction: discord.Interaction, current: str):
     conn.close()
     return [app_commands.Choice(name=eq[0], value=eq[0]) for eq in equipos]
 
+# Funciones aux para cerrar canales de forma segura
+async def seguro_borrar_canal(channel):
+    if channel:
+        try:
+            await channel.delete()
+        except (discord.NotFound, discord.HTTPException):
+            pass
+
 # ==========================================
 # --- 4. MODALES Y VISTAS DE TICKETS -------
 # ==========================================
 
-# 📝 Modal para que el socio ingrese su plantilla de Alianza directamente en un cuadro en pantalla
+# 📝 Modal para ingresar plantilla de Alianza
 class AlianzaModal(discord.ui.Modal, title="📝 Formulario de Alianza"):
     nombre_comunidad = discord.ui.TextInput(
         label="Nombre de tu Comunidad/Liga",
@@ -195,7 +203,10 @@ class AlianzaModal(discord.ui.Modal, title="📝 Formulario de Alianza"):
     )
 
     async def on_submit(self, interaction: discord.Interaction):
-        await interaction.response.defer()
+        try:
+            await interaction.response.defer()
+        except Exception:
+            pass
 
         await interaction.followup.send(
             f"✅ **Plantilla recibida correctamente.**\n"
@@ -228,19 +239,25 @@ class AlianzaTicketView(discord.ui.View):
 
     @discord.ui.button(label="🔔 Llamar al Staff", style=discord.ButtonStyle.secondary, custom_id="btn_llamar_staff_alianza")
     async def llamar_staff(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_message(
-            f"🔔 <@&{ID_FUNDADOR}> <@&{ID_CO_OWNER}> <@&{ID_ADMINISTRADOR}>, el usuario {interaction.user.mention} requiere atención.",
-            ephemeral=False
-        )
+        try:
+            await interaction.response.send_message(
+                f"🔔 <@&{ID_FUNDADOR}> <@&{ID_CO_OWNER}> <@&{ID_ADMINISTRADOR}>, el usuario {interaction.user.mention} requiere atención.",
+                ephemeral=False
+            )
+        except Exception:
+            pass
 
     @discord.ui.button(label="🔒 Cerrar Ticket", style=discord.ButtonStyle.danger, custom_id="btn_cerrar_ticket_alianza")
     async def cerrar_ticket(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_message("🔒 Cerrando ticket en 5 segundos...")
+        try:
+            await interaction.response.send_message("🔒 Cerrando ticket en 5 segundos...")
+        except Exception:
+            pass
         await asyncio.sleep(5)
-        await interaction.channel.delete()
+        await seguro_borrar_canal(interaction.channel)
 
 
-# 🧑‍💼 Menú Desplegable (Select) para elegir puesto en Postulaciones
+# 🧑‍💼 Menú Desplegable (Select) para Postulaciones
 class PostulacionSelect(discord.ui.Select):
     def __init__(self):
         options = [
@@ -277,7 +294,10 @@ class PostulacionSelect(discord.ui.Select):
             )
         }
 
-        await interaction.response.send_message(f"🤖 **Preguntas para {cargo.capitalize()}:**\n\n{preguntas[cargo]}")
+        try:
+            await interaction.response.send_message(f"🤖 **Preguntas para {cargo.capitalize()}:**\n\n{preguntas[cargo]}")
+        except Exception:
+            pass
 
 
 class PostulacionTicketView(discord.ui.View):
@@ -287,28 +307,37 @@ class PostulacionTicketView(discord.ui.View):
 
     @discord.ui.button(label="🔒 Cerrar Ticket", style=discord.ButtonStyle.danger, custom_id="btn_cerrar_postulacion", row=1)
     async def cerrar_ticket(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_message("🔒 Cerrando ticket en 5 segundos...")
+        try:
+            await interaction.response.send_message("🔒 Cerrando ticket en 5 segundos...")
+        except Exception:
+            pass
         await asyncio.sleep(5)
-        await interaction.channel.delete()
+        await seguro_borrar_canal(interaction.channel)
 
 
-# ❗ Vista para Reportes
+# ❗ Vista para Reportes (Corregido: style=discord.ButtonStyle.secondary para evitar el fallo de Style.warning)
 class ReporteTicketView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
 
-    @discord.ui.button(label="🔔 Re-notificar al Staff", style=discord.ButtonStyle.warning, custom_id="btn_re_llamar_staff")
+    @discord.ui.button(label="🔔 Re-notificar al Staff", style=discord.ButtonStyle.secondary, custom_id="btn_re_llamar_staff")
     async def re_llamar_staff(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_message(
-            f"⚠️ **Atención Staff:** <@&{ID_FUNDADOR}> <@&{ID_CO_OWNER}> <@&{ID_ADMINISTRADOR}>, el usuario {interaction.user.mention} solicita asistencia inmediata.",
-            ephemeral=False
-        )
+        try:
+            await interaction.response.send_message(
+                f"⚠️ **Atención Staff:** <@&{ID_FUNDADOR}> <@&{ID_CO_OWNER}> <@&{ID_ADMINISTRADOR}>, el usuario {interaction.user.mention} solicita asistencia inmediata.",
+                ephemeral=False
+            )
+        except Exception:
+            pass
 
     @discord.ui.button(label="🔒 Cerrar Ticket", style=discord.ButtonStyle.danger, custom_id="btn_cerrar_reporte")
     async def cerrar_ticket(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_message("🔒 Cerrando ticket en 5 segundos...")
+        try:
+            await interaction.response.send_message("🔒 Cerrando ticket en 5 segundos...")
+        except Exception:
+            pass
         await asyncio.sleep(5)
-        await interaction.channel.delete()
+        await seguro_borrar_canal(interaction.channel)
 
 
 # 🎫 Menú Desplegable Principal del Panel de Tickets
@@ -320,11 +349,12 @@ class TicketSelect(discord.ui.Select):
             discord.SelectOption(label="Postulaciones", description="Abrir ticket para postularte", emoji="🧑‍💼", value="postulacion"),
             discord.SelectOption(label="Otro", description="Consulta general u otros temas", emoji="❓", value="otro"),
         ]
-        super().__init__(placeholder="Selecciona la opción que necesitas...", min_values=1, max_values=1, custom_id="ticket_main_select_v8")
+        super().__init__(placeholder="Selecciona la opción que necesitas...", min_values=1, max_values=1, custom_id="ticket_main_select_v9")
 
     async def callback(self, interaction: discord.Interaction):
         try:
-            await interaction.response.defer(ephemeral=True)
+            if not interaction.response.is_done():
+                await interaction.response.defer(ephemeral=True)
         except Exception:
             return
 
@@ -405,7 +435,7 @@ class TicketSelect(discord.ui.Select):
                 view=AlianzaTicketView()
             )
 
-        # ❗ REPORTES (Notificación inmediata al Staff)
+        # ❗ REPORTES
         elif categoria_tipo == "reporte":
             menciones_staff = f"<@&{ID_FUNDADOR}> <@&{ID_CO_OWNER}> <@&{ID_ADMINISTRADOR}>"
             embed_reporte = discord.Embed(
@@ -722,7 +752,7 @@ class SeasonGroup(app_commands.Group):
         conn.commit()
         conn.close()
 
-        await interaction.followup.send(f"🚀 ¡Temporada **{temp[1]}** oficialmente ACTIVA!")
+        await interaction.followup.send(f"🚀 ¡Temporada **{temp[1]}** officially ACTIVA!")
 
 bot.tree.add_command(SeasonGroup())
 
