@@ -181,7 +181,7 @@ class TicketInteractiveView(discord.ui.View):
         info = respuestas.get(self.categoria_tipo, "Escribe tu duda detalladamente en este canal.")
         await interaction.response.send_message(f"ℹ️ **Información Automática:**\n\n{info}", ephemeral=True)
 
-    @discord.ui.button(label="🔔 Llamar al Staff", style=discord.ButtonStyle.warning, custom_id="btn_llamar_staff")
+    @discord.ui.button(label="🔔 Llamar al Staff", style=discord.ButtonStyle.danger, custom_id="btn_llamar_staff")
     async def llamar_staff(self, interaction: discord.Interaction, button: discord.ui.Button):
         ID_ADMINISTRADOR = 1538389985336762448
         await interaction.response.send_message(f"🔔 <@&{ID_ADMINISTRADOR}>, el usuario {interaction.user.mention} solicita asistencia de un administrador.")
@@ -211,8 +211,6 @@ class TicketSelect(discord.ui.Select):
         )
 
     async def callback(self, interaction: discord.Interaction):
-        await interaction.response.defer(ephemeral=True)
-
         categoria_tipo = self.values[0]
         guild = interaction.guild
         user = interaction.user
@@ -221,7 +219,7 @@ class TicketSelect(discord.ui.Select):
         
         existing_channel = discord.utils.get(guild.channels, name=channel_name)
         if existing_channel:
-            await interaction.followup.send(f"❌ Ya tienes un ticket abierto en {existing_channel.mention}", ephemeral=True)
+            await interaction.response.send_message(f"❌ Ya tienes un ticket abierto en {existing_channel.mention}", ephemeral=True)
             return
 
         ID_ADMINISTRADOR = 1538389985336762448
@@ -256,10 +254,10 @@ class TicketSelect(discord.ui.Select):
             )
 
             await ticket_channel.send(content=f"{user.mention}", embed=embed, view=TicketInteractiveView(categoria_tipo))
-            await interaction.followup.send(f"✅ Ticket creado correctamente: {ticket_channel.mention}", ephemeral=True)
+            await interaction.response.send_message(f"✅ Ticket creado correctamente: {ticket_channel.mention}", ephemeral=True)
 
         except Exception as e:
-            await interaction.followup.send(f"❌ Error al crear el ticket: {e}", ephemeral=True)
+            await interaction.response.send_message(f"❌ Error al crear el ticket: {e}", ephemeral=True)
 
 
 class TicketLaunchView(discord.ui.View):
@@ -387,7 +385,6 @@ class MuseoSelect(discord.ui.Select):
         super().__init__(placeholder="Selecciona un equipo para consultar su vitrina...", options=options)
 
     async def callback(self, interaction: discord.Interaction):
-        await interaction.response.defer(ephemeral=True)
         equipo_id = int(self.values[0])
 
         conn = sqlite3.connect(DB_NAME)
@@ -400,7 +397,7 @@ class MuseoSelect(discord.ui.Select):
         conn.close()
 
         if not items:
-            await interaction.followup.send(f"🏛️ La vitrina de **{eq_nombre}** aún no contiene registros.", ephemeral=True)
+            await interaction.response.send_message(f"🏛️ La vitrina de **{eq_nombre}** aún no contiene registros.", ephemeral=True)
             return
 
         embed = discord.Embed(title=f"🏛️ Vitrina Histórica: {eq_nombre}", color=discord.Color.gold())
@@ -436,7 +433,7 @@ class MuseoSelect(discord.ui.Select):
                 txt += f"🎖️ **{r[1]}**{temp_str}{det_str}\n"
             embed.add_field(name="🎖️ Reconocimientos Mención Honorífica", value=txt, inline=False)
 
-        await interaction.followup.send(embed=embed, ephemeral=True)
+        await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
 class MuseoGroup(app_commands.Group):
@@ -469,7 +466,6 @@ class MuseoGroup(app_commands.Group):
 
     @app_commands.command(name="ver", description="Abre el menú interactivo para ver trofeos.")
     async def ver(self, interaction: discord.Interaction):
-        await interaction.response.defer(ephemeral=True)
         conn = sqlite3.connect(DB_NAME)
         cursor = conn.cursor()
         cursor.execute("SELECT id, nombre FROM equipos")
@@ -477,12 +473,12 @@ class MuseoGroup(app_commands.Group):
         conn.close()
 
         if not equipos:
-            await interaction.followup.send("No hay equipos registrados.", ephemeral=True)
+            await interaction.response.send_message("No hay equipos registrados.", ephemeral=True)
             return
 
         view = discord.ui.View()
         view.add_item(MuseoSelect(equipos))
-        await interaction.followup.send("🏛️ Elige un equipo para consultar su vitrina:", view=view, ephemeral=True)
+        await interaction.response.send_message("🏛️ Elige un equipo para consultar su vitrina:", view=view, ephemeral=True)
 
 bot.tree.add_command(MuseoGroup())
 
@@ -845,8 +841,6 @@ async def traspaso(interaction: discord.Interaction, jugador: discord.Member, eq
 @bot.tree.command(name="ticket_panel", description="Publica el panel con menú de atención por ticket.")
 @app_commands.checks.has_permissions(administrator=True)
 async def ticket_panel(interaction: discord.Interaction):
-    await interaction.response.defer(ephemeral=True)
-
     menciones_roles = "<@&1538383718459252786> <@&1538390799299911766> <@&1538389985336762448> <@&1538390251414757396>"
 
     mensaje_descripcion = (
@@ -862,13 +856,12 @@ async def ticket_panel(interaction: discord.Interaction):
 
     embed = discord.Embed(title="🎫 Centro de Atención y Tickets", description=mensaje_descripcion, color=discord.Color.gold())
     await interaction.channel.send(content=menciones_roles, embed=embed, view=TicketLaunchView())
-    await interaction.followup.send("✅ Panel publicado correctamente.", ephemeral=True)
+    await interaction.response.send_message("✅ Panel publicado correctamente.", ephemeral=True)
 
 
 # --- EVENTOS DE INICIO ---
 @bot.event
 async def on_ready():
-    # Registrar las vistas persistentes para que sigan respondiendo tras reinicios
     bot.add_view(TicketLaunchView())
     bot.add_view(TicketInteractiveView())
 
