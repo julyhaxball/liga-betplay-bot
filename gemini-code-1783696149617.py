@@ -200,10 +200,7 @@ class AlianzaModal(discord.ui.Modal, title="📝 Formulario de Alianza"):
     )
 
     async def on_submit(self, interaction: discord.Interaction):
-        if not interaction.response.is_done():
-            await interaction.response.defer(ephemeral=True)
-
-        await interaction.followup.send(
+        await interaction.response.send_message(
             f"✅ **Plantilla recibida correctamente.**\n"
             f"La propuesta de **{self.nombre_comunidad.value}** ha sido procesada.",
             ephemeral=True
@@ -234,17 +231,14 @@ class AlianzaTicketView(discord.ui.View):
 
     @discord.ui.button(label="🔔 Llamar al Staff", style=discord.ButtonStyle.primary, custom_id="btn_llamar_staff_alianza")
     async def llamar_staff(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if not interaction.response.is_done():
-            await interaction.response.defer()
-        await interaction.followup.send(
-            f"🔔 <@&{ID_FUNDADOR}> <@&{ID_CO_OWNER}> <@&{ID_ADMINISTRADOR}>, el usuario {interaction.user.mention} requiere atención."
+        await interaction.response.send_message(
+            f"🔔 <@&{ID_FUNDADOR}> <@&{ID_CO_OWNER}> <@&{ID_ADMINISTRADOR}>, el usuario {interaction.user.mention} requiere atención.",
+            ephemeral=False
         )
 
     @discord.ui.button(label="🔒 Cerrar Ticket", style=discord.ButtonStyle.danger, custom_id="btn_cerrar_ticket_alianza")
     async def cerrar_ticket(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if not interaction.response.is_done():
-            await interaction.response.defer()
-        await interaction.followup.send("🔒 Cerrando ticket en 5 segundos...")
+        await interaction.response.send_message("🔒 Cerrando ticket en 5 segundos...", ephemeral=True)
         await asyncio.sleep(5)
         await seguro_borrar_canal(interaction.channel)
 
@@ -256,19 +250,16 @@ class PostulacionSelect(discord.ui.Select):
             discord.SelectOption(label="Diseñador Gráfico", description="Postularte para hacer banners/creativos", emoji="🎨", value="disenador"),
             discord.SelectOption(label="Moderador / Periodista", description="Postularte para moderar o redactar", emoji="📰", value="moderador"),
         ]
-        super().__init__(placeholder="Selecciona el cargo...", min_values=1, max_values=1, custom_id="select_postulacion_cargo")
+        super().__init__(placeholder="Selecciona el cargo...", min_values=1, max_values=1, options=options, custom_id="select_postulacion_cargo")
 
     async def callback(self, interaction: discord.Interaction):
-        if not interaction.response.is_done():
-            await interaction.response.defer()
-
         cargo = self.values[0]
         preguntas = {
             "admin": "🛡️ **POSTULACIÓN A ADMINISTRADOR**\n1. ¿Edad y país?\n2. ¿Experiencia previa?\n3. ¿Tiempo disponible diario?",
             "disenador": "🎨 **POSTULACIÓN A DISEÑADOR**\n1. Adjunta 2 o 3 trabajos previos.\n2. ¿Qué programas usas?\n3. ¿Disponibilidad de entregas?",
             "moderador": "📰 **POSTULACIÓN A MODERADOR / PERIODISTA**\n1. ¿Moderación o Redacción?\n2. ¿Horarios activo?\n3. ¿Cómo manejas un conflicto?"
         }
-        await interaction.followup.send(f"🤖 **Preguntas para {cargo.capitalize()}:**\n\n{preguntas[cargo]}")
+        await interaction.response.send_message(f"🤖 **Preguntas para {cargo.capitalize()}:**\n\n{preguntas[cargo]}", ephemeral=True)
 
 
 class PostulacionTicketView(discord.ui.View):
@@ -278,9 +269,7 @@ class PostulacionTicketView(discord.ui.View):
 
     @discord.ui.button(label="🔒 Cerrar Ticket", style=discord.ButtonStyle.danger, custom_id="btn_cerrar_postulacion", row=1)
     async def cerrar_ticket(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if not interaction.response.is_done():
-            await interaction.response.defer()
-        await interaction.followup.send("🔒 Cerrando ticket en 5 segundos...")
+        await interaction.response.send_message("🔒 Cerrando ticket en 5 segundos...", ephemeral=True)
         await asyncio.sleep(5)
         await seguro_borrar_canal(interaction.channel)
 
@@ -291,17 +280,14 @@ class ReporteTicketView(discord.ui.View):
 
     @discord.ui.button(label="🔔 Re-notificar al Staff", style=discord.ButtonStyle.secondary, custom_id="btn_re_llamar_staff")
     async def re_llamar_staff(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if not interaction.response.is_done():
-            await interaction.response.defer()
-        await interaction.followup.send(
-            f"⚠️ **Atención Staff:** <@&{ID_FUNDADOR}> <@&{ID_CO_OWNER}> <@&{ID_ADMINISTRADOR}>, el usuario {interaction.user.mention} solicita asistencia."
+        await interaction.response.send_message(
+            f"⚠️ **Atención Staff:** <@&{ID_FUNDADOR}> <@&{ID_CO_OWNER}> <@&{ID_ADMINISTRADOR}>, el usuario {interaction.user.mention} solicita asistencia.",
+            ephemeral=False
         )
 
     @discord.ui.button(label="🔒 Cerrar Ticket", style=discord.ButtonStyle.danger, custom_id="btn_cerrar_reporte")
     async def cerrar_ticket(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if not interaction.response.is_done():
-            await interaction.response.defer()
-        await interaction.followup.send("🔒 Cerrando ticket en 5 segundos...")
+        await interaction.response.send_message("🔒 Cerrando ticket en 5 segundos...", ephemeral=True)
         await asyncio.sleep(5)
         await seguro_borrar_canal(interaction.channel)
 
@@ -312,17 +298,14 @@ class OtroTicketView(discord.ui.View):
 
     @discord.ui.button(label="🔔 Llamar al Staff", style=discord.ButtonStyle.primary, custom_id="btn_llamar_staff_otro")
     async def llamar_staff(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if not interaction.response.is_done():
-            await interaction.response.defer()
-        await interaction.followup.send(
-            f"🔔 <@&{ID_FUNDADOR}> <@&{ID_CO_OWNER}> <@&{ID_ADMINISTRADOR}>, el usuario {interaction.user.mention} requiere asistencia."
+        await interaction.response.send_message(
+            f"🔔 <@&{ID_FUNDADOR}> <@&{ID_CO_OWNER}> <@&{ID_ADMINISTRADOR}>, el usuario {interaction.user.mention} requiere asistencia.",
+            ephemeral=False
         )
 
     @discord.ui.button(label="🔒 Cerrar Ticket", style=discord.ButtonStyle.danger, custom_id="btn_cerrar_otro")
     async def cerrar_ticket(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if not interaction.response.is_done():
-            await interaction.response.defer()
-        await interaction.followup.send("🔒 Cerrando ticket en 5 segundos...")
+        await interaction.response.send_message("🔒 Cerrando ticket en 5 segundos...", ephemeral=True)
         await asyncio.sleep(5)
         await seguro_borrar_canal(interaction.channel)
 
@@ -335,11 +318,16 @@ class TicketSelect(discord.ui.Select):
             discord.SelectOption(label="Postulaciones", description="Abrir ticket para postularte", emoji="🧑‍💼", value="postulacion"),
             discord.SelectOption(label="Otro", description="Consulta general u otros temas", emoji="❓", value="otro"),
         ]
-        super().__init__(placeholder="Selecciona la opción que necesitas...", min_values=1, max_values=1, custom_id="ticket_main_select_v12")
+        super().__init__(
+            placeholder="Selecciona la opción que necesitas...", 
+            min_values=1, 
+            max_values=1, 
+            options=options, 
+            custom_id="ticket_main_select_v14"
+        )
 
     async def callback(self, interaction: discord.Interaction):
-        if not interaction.response.is_done():
-            await interaction.response.defer(ephemeral=True)
+        await interaction.response.defer(ephemeral=True)
 
         categoria_tipo = self.values[0]
         guild = interaction.guild
@@ -454,11 +442,8 @@ class TraspasoFirmasView(discord.ui.View):
 
     @discord.ui.button(label="✍️ Firmar (DT Origen)", style=discord.ButtonStyle.secondary, custom_id="firma_dt_origen")
     async def firmar_origen(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if not interaction.response.is_done():
-            await interaction.response.defer()
-
         if interaction.user.id != self.dt_origen_id:
-            await interaction.followup.send("❌ Solo el DT de origen puede firmar.", ephemeral=True)
+            await interaction.response.send_message("❌ Solo el DT de origen puede firmar.", ephemeral=True)
             return
 
         self.firma_origen = True
@@ -466,16 +451,13 @@ class TraspasoFirmasView(discord.ui.View):
         button.style = discord.ButtonStyle.success
         button.label = "✍️ Firmado (Origen)"
 
-        await interaction.message.edit(embed=self.generar_embed(), view=self)
+        await interaction.response.edit_message(embed=self.generar_embed(), view=self)
         await self.comprobar_completado(interaction)
 
     @discord.ui.button(label="✍️ Firmar (DT Destino)", style=discord.ButtonStyle.primary, custom_id="firma_dt_destino")
     async def firmar_destino(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if not interaction.response.is_done():
-            await interaction.response.defer()
-
         if interaction.user.id != self.dt_destino_id:
-            await interaction.followup.send("❌ Solo el DT de destino puede firmar.", ephemeral=True)
+            await interaction.response.send_message("❌ Solo el DT de destino puede firmar.", ephemeral=True)
             return
 
         self.firma_destino = True
@@ -483,7 +465,7 @@ class TraspasoFirmasView(discord.ui.View):
         button.style = discord.ButtonStyle.success
         button.label = "✍️ Firmado (Destino)"
 
-        await interaction.message.edit(embed=self.generar_embed(), view=self)
+        await interaction.response.edit_message(embed=self.generar_embed(), view=self)
         await self.comprobar_completado(interaction)
 
     async def comprobar_completado(self, interaction: discord.Interaction):
@@ -520,7 +502,10 @@ class TraspasoFirmasView(discord.ui.View):
             for child in self.children:
                 child.disabled = True
 
-            await interaction.message.edit(embed=embed_final, view=self)
+            try:
+                await interaction.message.edit(embed=embed_final, view=self)
+            except discord.HTTPException:
+                pass
 
 
 # ==========================================
@@ -532,9 +517,6 @@ class MuseoSelect(discord.ui.Select):
         super().__init__(placeholder="Selecciona un equipo...", options=options)
 
     async def callback(self, interaction: discord.Interaction):
-        if not interaction.response.is_done():
-            await interaction.response.defer(ephemeral=True)
-
         equipo_id = int(self.values[0])
 
         conn = sqlite3.connect(DB_NAME)
@@ -548,14 +530,14 @@ class MuseoSelect(discord.ui.Select):
         conn.close()
 
         if not items:
-            await interaction.followup.send(f"🏛️ La vitrina de **{eq_nombre}** aún está vacía.", ephemeral=True)
+            await interaction.response.send_message(f"🏛️ La vitrina de **{eq_nombre}** aún está vacía.", ephemeral=True)
             return
 
         embed = discord.Embed(title=f"🏛️ Vitrina Histórica: {eq_nombre}", color=discord.Color.gold())
         for it in items:
             embed.add_field(name=f"🏆 {it[1]}", value=f"Temporada: {it[3] or 'N/A'}\n{it[4] or ''}", inline=False)
 
-        await interaction.followup.send(embed=embed, ephemeral=True)
+        await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
 class MuseoGroup(app_commands.Group):
@@ -566,16 +548,13 @@ class MuseoGroup(app_commands.Group):
     @app_commands.checks.has_permissions(administrator=True)
     @app_commands.autocomplete(equipo=equipo_autocomplete)
     async def add_titulo(self, interaction: discord.Interaction, equipo: str, titulo: str, temporada: str = None, detalles: str = None):
-        if not interaction.response.is_done():
-            await interaction.response.defer()
-
         conn = sqlite3.connect(DB_NAME)
         cursor = conn.cursor()
         cursor.execute("SELECT id FROM equipos WHERE nombre = ?", (equipo,))
         eq = cursor.fetchone()
 
         if not eq:
-            await interaction.followup.send(f"❌ El equipo **{equipo}** no existe.", ephemeral=True)
+            await interaction.response.send_message(f"❌ El equipo **{equipo}** no existe.", ephemeral=True)
             conn.close()
             return
 
@@ -586,13 +565,10 @@ class MuseoGroup(app_commands.Group):
         conn.commit()
         conn.close()
 
-        await interaction.followup.send(f"🏆 Se añadió el título **{titulo}** a la vitrina de **{equipo}**.")
+        await interaction.response.send_message(f"🏆 Se añadió el título **{titulo}** a la vitrina de **{equipo}**.")
 
     @app_commands.command(name="ver", description="Abre el menú para ver trofeos")
     async def ver(self, interaction: discord.Interaction):
-        if not interaction.response.is_done():
-            await interaction.response.defer(ephemeral=True)
-
         conn = sqlite3.connect(DB_NAME)
         cursor = conn.cursor()
         cursor.execute("SELECT id, nombre FROM equipos")
@@ -600,12 +576,12 @@ class MuseoGroup(app_commands.Group):
         conn.close()
 
         if not equipos:
-            await interaction.followup.send("No hay equipos registrados.", ephemeral=True)
+            await interaction.response.send_message("No hay equipos registrados.", ephemeral=True)
             return
 
         view = discord.ui.View()
         view.add_item(MuseoSelect(equipos))
-        await interaction.followup.send("🏛️ Elige un equipo:", view=view, ephemeral=True)
+        await interaction.response.send_message("🏛️ Elige un equipo:", view=view, ephemeral=True)
 
 bot.tree.add_command(MuseoGroup())
 
@@ -620,33 +596,27 @@ class SeasonGroup(app_commands.Group):
     @app_commands.command(name="create", description="Crea una nueva temporada")
     @app_commands.checks.has_permissions(administrator=True)
     async def season_create(self, interaction: discord.Interaction, nombre: str):
-        if not interaction.response.is_done():
-            await interaction.response.defer()
-
         conn = sqlite3.connect(DB_NAME)
         cursor = conn.cursor()
         try:
             cursor.execute("INSERT INTO temporadas (nombre, estado) VALUES (?, 'inscripcion')", (nombre,))
             conn.commit()
-            await interaction.followup.send(f"🏆 Temporada **{nombre}** creada.")
+            await interaction.response.send_message(f"🏆 Temporada **{nombre}** creada.")
         except sqlite3.IntegrityError:
-            await interaction.followup.send(f"❌ La temporada **{nombre}** ya existe.", ephemeral=True)
+            await interaction.response.send_message(f"❌ La temporada **{nombre}** ya existe.", ephemeral=True)
         finally:
             conn.close()
 
     @app_commands.command(name="start", description="Activa la temporada")
     @app_commands.checks.has_permissions(administrator=True)
     async def season_start(self, interaction: discord.Interaction, nombre: str):
-        if not interaction.response.is_done():
-            await interaction.response.defer()
-
         conn = sqlite3.connect(DB_NAME)
         cursor = conn.cursor()
         cursor.execute("UPDATE temporadas SET estado = 'en_curso' WHERE nombre = ?", (nombre,))
         conn.commit()
         conn.close()
 
-        await interaction.followup.send(f"🚀 La temporada **{nombre}** ha sido activada.")
+        await interaction.response.send_message(f"🚀 La temporada **{nombre}** ha sido activada.")
 
 bot.tree.add_command(SeasonGroup())
 
@@ -662,16 +632,13 @@ class LigaGroup(app_commands.Group):
     @app_commands.checks.has_permissions(administrator=True)
     @app_commands.autocomplete(local=equipo_autocomplete, visitante=equipo_autocomplete)
     async def registrar_partido(self, interaction: discord.Interaction, temporada: str, jornada: int, local: str, visitante: str, goles_local: int, goles_visitante: int, replay: str = None):
-        if not interaction.response.is_done():
-            await interaction.response.defer()
-
         conn = sqlite3.connect(DB_NAME)
         cursor = conn.cursor()
         
         cursor.execute("SELECT id FROM temporadas WHERE nombre = ?", (temporada,))
         temp = cursor.fetchone()
         if not temp:
-            await interaction.followup.send(f"❌ La temporada **{temporada}** no existe.", ephemeral=True)
+            await interaction.response.send_message(f"❌ La temporada **{temporada}** no existe.", ephemeral=True)
             conn.close()
             return
         temp_id = temp[0]
@@ -682,7 +649,7 @@ class LigaGroup(app_commands.Group):
         eq_v = cursor.fetchone()
 
         if not eq_l or not eq_v:
-            await interaction.followup.send("❌ Uno de los equipos no está registrado.", ephemeral=True)
+            await interaction.response.send_message("❌ Uno de los equipos no está registrado.", ephemeral=True)
             conn.close()
             return
 
@@ -693,13 +660,10 @@ class LigaGroup(app_commands.Group):
         conn.commit()
         conn.close()
 
-        await interaction.followup.send(f"⚽ Partido registrado: **{local} {goles_local} - {goles_visitante} {visitante}** (Jornada {jornada}).")
+        await interaction.response.send_message(f"⚽ Partido registrado: **{local} {goles_local} - {goles_visitante} {visitante}** (Jornada {jornada}).")
 
     @app_commands.command(name="stats", description="Muestra las estadísticas de un jugador")
     async def stats(self, interaction: discord.Interaction, miembro: discord.Member):
-        if not interaction.response.is_done():
-            await interaction.response.defer(ephemeral=True)
-
         conn = sqlite3.connect(DB_NAME)
         cursor = conn.cursor()
         cursor.execute("SELECT equipo_id, goles, asistencias, mvps, partidos_jugados FROM jugadores WHERE discord_id = ?", (miembro.id,))
@@ -715,7 +679,7 @@ class LigaGroup(app_commands.Group):
         conn.close()
 
         if not row:
-            await interaction.followup.send(f"📊 {miembro.mention} aún no registra estadísticas en la liga.", ephemeral=True)
+            await interaction.response.send_message(f"📊 {miembro.mention} aún no registra estadísticas en la liga.", ephemeral=True)
             return
 
         embed = discord.Embed(title=f"📊 Estadísticas de {miembro.display_name}", color=discord.Color.blue())
@@ -725,14 +689,11 @@ class LigaGroup(app_commands.Group):
         embed.add_field(name="MVPs", value=str(row[3]), inline=True)
         embed.add_field(name="Partidos Jugados", value=str(row[4]), inline=True)
 
-        await interaction.followup.send(embed=embed, ephemeral=True)
+        await interaction.response.send_message(embed=embed, ephemeral=True)
 
     @app_commands.command(name="sancion", description="Aplica una sanción a un jugador")
     @app_commands.checks.has_permissions(administrator=True)
     async def sancion(self, interaction: discord.Interaction, miembro: discord.Member, tipo: str, partidos: int, motivo: str):
-        if not interaction.response.is_done():
-            await interaction.response.defer()
-
         conn = sqlite3.connect(DB_NAME)
         cursor = conn.cursor()
         cursor.execute(
@@ -746,7 +707,7 @@ class LigaGroup(app_commands.Group):
         conn.commit()
         conn.close()
 
-        await interaction.followup.send(f"⚖️ Sanción aplicada a {miembro.mention}: **{tipo}** ({partidos} partidos). Motivo: {motivo}")
+        await interaction.response.send_message(f"⚖️ Sanción aplicada a {miembro.mention}: **{tipo}** ({partidos} partidos). Motivo: {motivo}")
 
 bot.tree.add_command(LigaGroup())
 
@@ -757,16 +718,15 @@ bot.tree.add_command(LigaGroup())
 @bot.tree.command(name="setup_tickets", description="Despliega el panel de tickets")
 @app_commands.default_permissions(administrator=True)
 async def setup_tickets(interaction: discord.Interaction):
-    if not interaction.response.is_done():
-        await interaction.response.defer(ephemeral=True)
-        
+    # Respondemos primero para evitar Unknown Interaction (10062)
+    await interaction.response.send_message("✅ Panel desplegado con éxito.", ephemeral=True)
+    
     embed = discord.Embed(
         title="🎫 CENTRO DE ATENCIÓN Y SOPORTE",
         description="Selecciona una opción en el menú desplegable.",
         color=discord.Color.dark_theme()
     )
     await interaction.channel.send(embed=embed, view=MainTicketView())
-    await interaction.followup.send("✅ Panel desplegado.", ephemeral=True)
 
 @bot.event
 async def on_ready():
