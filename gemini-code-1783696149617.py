@@ -151,11 +151,11 @@ intents.members = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-ID_CANAL_PARTNERS = 123456789012345678  # Cambia por la ID de tu canal de alianzas
+ID_CANAL_PARTNERS = 1538933871457075230
 ID_FUNDADOR = 1538383718459252786
 ID_CO_OWNER = 1538390799299911766
 ID_ADMINISTRADOR = 1538389985336762448
-ID_ROL_PARTNER = 1538390251414757396
+ID_ROL_PARTNER = 1538933503641780265
 
 async def equipo_autocomplete(interaction: discord.Interaction, current: str):
     conn = sqlite3.connect(DB_NAME)
@@ -718,16 +718,20 @@ bot.tree.add_command(LigaGroup())
 @bot.tree.command(name="setup_tickets", description="Despliega el panel de tickets")
 @app_commands.default_permissions(administrator=True)
 async def setup_tickets(interaction: discord.Interaction):
-    # Respondemos primero para evitar Unknown Interaction (10062)
     await interaction.response.send_message("✅ Panel desplegado con éxito.", ephemeral=True)
     
     embed = discord.Embed(
-        title="🎫 CENTRO DE ATENCIÓN Y SOPORTE",
+        title="🎫 Centro de Atención y Tickets",
         description=(
-            "Selecciona una opción en el menú desplegable para abrir tu ticket.\n\n"
-            "🕒 **Horarios de atención:**\n"
-            "• Lunes a Viernes: 15:00 - 23:00 (Hora Local)\n"
-            "• Sábados y Domingos: 12:00 - 01:00 (Hora Local)"
+            "📢 **HORARIO DE ATENCIÓN DE TICKETS**\n\n"
+            "Les informamos que el horario oficial de atención de tickets será el siguiente:\n\n"
+            "🇨🇴 **Colombia:** 2:00 PM - 9:00 PM\n"
+            "🇻🇪 **Venezuela:** 3:00 PM - 10:00 PM\n"
+            "🇨🇱 **Chile:** 4:00 PM - 11:00 PM\n"
+            "🇦🇷 **Argentina:** 4:00 PM - 11:00 PM\n"
+            "🇺🇾 **Uruguay:** 4:00 PM - 11:00 PM\n\n"
+            "⚠️ Los tickets abiertos fuera de este horario podrán ser atendidos al día siguiente, dependiendo de la disponibilidad del Staff.\n\n"
+            "Agradecemos su comprensión y colaboración. 🏆⚽"
         ),
         color=discord.Color.dark_theme()
     )
