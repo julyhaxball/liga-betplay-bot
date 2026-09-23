@@ -289,7 +289,7 @@ class ReporteTicketView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
 
-    @discord.ui.button(label="🔔 Re-notificar al Staff", style=discord.ButtonStyle.primary, custom_id="btn_re_llamar_staff")
+    @discord.ui.button(label="🔔 Re-notificar al Staff", style=discord.ButtonStyle.secondary, custom_id="btn_re_llamar_staff")
     async def re_llamar_staff(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not interaction.response.is_done():
             await interaction.response.defer()
@@ -655,13 +655,16 @@ bot.tree.add_command(SeasonGroup())
 @bot.tree.command(name="setup_tickets", description="Despliega el panel de tickets")
 @app_commands.default_permissions(administrator=True)
 async def setup_tickets(interaction: discord.Interaction):
+    if not interaction.response.is_done():
+        await interaction.response.defer(ephemeral=True)
+        
     embed = discord.Embed(
         title="🎫 CENTRO DE ATENCIÓN Y SOPORTE",
         description="Selecciona una opción en el menú desplegable.",
         color=discord.Color.dark_theme()
     )
     await interaction.channel.send(embed=embed, view=MainTicketView())
-    await interaction.response.send_message("✅ Panel desplegado.", ephemeral=True)
+    await interaction.followup.send("✅ Panel desplegado.", ephemeral=True)
 
 @bot.event
 async def on_ready():
@@ -669,7 +672,6 @@ async def on_ready():
     print(f"🤖 Bot activo como: {bot.user.name}")
     print("==========================================")
     
-    # Registra las vistas persistentes para que funcionen siempre tras reiniciar
     bot.add_view(MainTicketView())
     bot.add_view(AlianzaTicketView())
     bot.add_view(PostulacionTicketView())
