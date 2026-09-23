@@ -723,7 +723,12 @@ async def setup_tickets(interaction: discord.Interaction):
     
     embed = discord.Embed(
         title="🎫 CENTRO DE ATENCIÓN Y SOPORTE",
-        description="Selecciona una opción en el menú desplegable.",
+        description=(
+            "Selecciona una opción en el menú desplegable para abrir tu ticket.\n\n"
+            "🕒 **Horarios de atención:**\n"
+            "• Lunes a Viernes: 15:00 - 23:00 (Hora Local)\n"
+            "• Sábados y Domingos: 12:00 - 01:00 (Hora Local)"
+        ),
         color=discord.Color.dark_theme()
     )
     await interaction.channel.send(embed=embed, view=MainTicketView())
