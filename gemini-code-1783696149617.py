@@ -146,11 +146,8 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 ID_CANAL_PARTNERS = 1538933871457075230
 ID_CANAL_FICHAJES = 1538963728043741346
 ID_CANAL_BAJAS = 1538964371722600498
-
-ID_FUNDADOR = 1538383718459252786
-ID_CO_OWNER = 1538390799299911766
-ID_ADMINISTRADOR = 1538389985336762448
-ID_ROL_PARTNER = 1538933503641780265
+ID_CANAL_RESULTADOS = 1538935950288093235
+ID_ROL_RESULTADOS = 1539028557420957866
 
 async def equipo_autocomplete(interaction: discord.Interaction, current: str):
     conn = sqlite3.connect(DB_NAME)
@@ -160,6 +157,14 @@ async def equipo_autocomplete(interaction: discord.Interaction, current: str):
     conn.close()
     return [app_commands.Choice(name=eq[0], value=eq[0]) for eq in equipos]
 
+async def temporada_autocomplete(interaction: discord.Interaction, current: str):
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    cursor.execute("SELECT nombre FROM temporadas WHERE nombre LIKE ? LIMIT 25", (f"%{current}%",))
+    temps = cursor.fetchall()
+    conn.close()
+    return [app_commands.Choice(name=t[0], value=t[0]) for t in temps]
+
 async def seguro_borrar_canal(channel):
     if channel:
         try:
@@ -168,7 +173,6 @@ async def seguro_borrar_canal(channel):
             pass
 
 def actualizar_valor_mercado(cursor, jugador_id):
-    """Calcula y actualiza el valor del jugador en base a estadísticas y ELO"""
     cursor.execute("SELECT goles, asistencias, mvps, partidos_jugados, elo FROM jugadores WHERE discord_id = ?", (jugador_id,))
     row = cursor.fetchone()
     if row:
@@ -177,11 +181,9 @@ def actualizar_valor_mercado(cursor, jugador_id):
         cursor.execute("UPDATE jugadores SET valor_mercado = ? WHERE discord_id = ?", (max(5, nuevo_valor), jugador_id))
 
 def generar_tarjeta_fichaje(nombre_jugador, equipo_origen, equipo_destino, valor):
-    """Genera automáticamente la imagen de fichaje con los colores del logo (morado, negro y blanco)"""
     img = Image.new("RGB", (800, 500), color=(15, 12, 25))
     draw = ImageDraw.Draw(img)
     
-    # Bordes y marcos estilo neón morado
     draw.rectangle([20, 20, 780, 480], outline=(142, 68, 173), width=4)
     draw.rectangle([30, 30, 770, 470], outline=(40, 30, 60), width=2)
     draw.rectangle([30, 30, 770, 100], fill=(25, 18, 42))
@@ -197,7 +199,6 @@ def generar_tarjeta_fichaje(nombre_jugador, equipo_origen, equipo_destino, valor
     draw.text((50, 135), f"De: {equipo_origen}", fill=(180, 180, 180), font=font_sub)
     draw.text((50, 175), f"A: {equipo_destino}", fill=(170, 100, 255), font=font_sub)
     
-    # Círculo central estético
     draw.ellipse([320, 210, 480, 370], fill=(45, 25, 75), outline=(170, 100, 255), width=3)
     draw.text((370, 260), "⚽", font=font_grande)
 
@@ -282,7 +283,7 @@ class MainTicketView(discord.ui.View):
 
 
 # ==========================================
-# --- 5. TRASPOS CON TARJETAS E IMÁGENES ---
+# --- 5. TRASPASOS CON DOBLE FIRMA ----------
 # ==========================================
 class TraspasoFirmasView(discord.ui.View):
     def __init__(self, jugador, eq_origen_nombre, eq_destino_nombre, dt_origen_id, dt_destino_id, eq_origen_id, eq_destino_id, rol_origen_id, rol_destino_id):
@@ -441,9 +442,9 @@ bot.tree.add_command(MuseoGroup())
 
 class SeasonGroup(app_commands.Group):
     def __init__(self):
-        super().__init__(name="season", description="Gestión de temporadas")
+        super().__init__(name="season", description="Gestión completa de temporadas")
 
-    @app_commands.command(name="create", description="Crea una temporada")
+    @app_commands.command(name="create", description="Crea una temporada en fase de inscripción")
     @app_commands.checks.has_permissions(administrator=True)
     async def season_create(self, interaction: discord.Interaction, nombre: str):
         conn = sqlite3.connect(DB_NAME)
@@ -451,22 +452,56 @@ class SeasonGroup(app_commands.Group):
         try:
             cursor.execute("INSERT INTO temporadas (nombre, estado) VALUES (?, 'inscripcion')", (nombre,))
             conn.commit()
-            await interaction.response.send_message(f"🏆 Temporada **{nombre}** creada.")
+            await interaction.response.send_message(f"🏆 Temporada **{nombre}** creada con éxito (Estado: Inscripción).")
         except sqlite3.IntegrityError:
-            await interaction.response.send_message(f"❌ Ya existe.", ephemeral=True)
+            await interaction.response.send_message(f"❌ Ya existe una temporada con ese nombre.", ephemeral=True)
         finally:
             conn.close()
+
+    @app_commands.command(name="start", description="Inicia una temporada existente (cambia estado a activa)")
+    @app_commands.checks.has_permissions(administrator=True)
+    @app_commands.autocomplete(nombre=temporada_autocomplete)
+    async def season_start(self, interaction: discord.Interaction, nombre: str):
+        conn = sqlite3.connect(DB_NAME)
+        cursor = conn.cursor()
+        cursor.execute("SELECT id FROM temporadas WHERE nombre = ?", (nombre,))
+        temp = cursor.fetchone()
+        if not temp:
+            await interaction.response.send_message(f"❌ La temporada no existe.", ephemeral=True)
+            conn.close()
+            return
+        cursor.execute("UPDATE temporadas SET estado = 'activa' WHERE id = ?", (temp[0],))
+        conn.commit()
+        conn.close()
+        await interaction.response.send_message(f"🚀 ¡La temporada **{nombre}** ha dado inicio oficialmente!")
+
+    @app_commands.command(name="delete", description="Elimina una temporada existente")
+    @app_commands.checks.has_permissions(administrator=True)
+    @app_commands.autocomplete(nombre=temporada_autocomplete)
+    async def season_delete(self, interaction: discord.Interaction, nombre: str):
+        conn = sqlite3.connect(DB_NAME)
+        cursor = conn.cursor()
+        cursor.execute("SELECT id FROM temporadas WHERE nombre = ?", (nombre,))
+        temp = cursor.fetchone()
+        if not temp:
+            await interaction.response.send_message(f"❌ La temporada no existe.", ephemeral=True)
+            conn.close()
+            return
+        cursor.execute("DELETE FROM temporadas WHERE id = ?", (temp[0],))
+        conn.commit()
+        conn.close()
+        await interaction.response.send_message(f"🗑️ Temporada **{nombre}** eliminada correctamente.")
 
 bot.tree.add_command(SeasonGroup())
 
 class LigaGroup(app_commands.Group):
     def __init__(self):
-        super().__init__(name="liga", description="Comandos operativos de la liga")
+        super().__init__(name="liga", description="Comandos operativos de la liga y partidos")
 
-    @app_commands.command(name="registrar_partido", description="Registra un partido, ELO y estadísticas")
+    @app_commands.command(name="registrar_partido", description="Registra partido, ELO, stats, replay y publica en resultados")
     @app_commands.checks.has_permissions(administrator=True)
     @app_commands.autocomplete(local=equipo_autocomplete, visitante=equipo_autocomplete)
-    async def registrar_partido(self, interaction: discord.Interaction, temporada: str, jornada: int, local: str, visitante: str, goles_local: int, goles_visitante: int):
+    async def registrar_partido(self, interaction: discord.Interaction, temporada: str, jornada: int, local: str, visitante: str, goles_local: int, goles_visitante: int, replay_url: str = None):
         await interaction.response.defer(ephemeral=False)
         conn = sqlite3.connect(DB_NAME)
         cursor = conn.cursor()
@@ -485,11 +520,11 @@ class LigaGroup(app_commands.Group):
         eq_v = cursor.fetchone()
 
         if not eq_l or not eq_v:
-            await interaction.followup.send("❌ Equipos no encontrados.", ephemeral=True)
+            await interaction.followup.send("❌ Equipos no encontrados en la base de datos.", ephemeral=True)
             conn.close()
             return
 
-        # Cálculo de ELO
+        # Cálculo ELO
         k = 32
         elo_l, elo_v = eq_l[1], eq_v[1]
         score_l = 1.0 if goles_local > goles_visitante else (0.5 if goles_local == goles_visitante else 0.0)
@@ -499,14 +534,30 @@ class LigaGroup(app_commands.Group):
 
         cursor.execute("UPDATE equipos SET elo = ? WHERE id = ?", (new_elo_l, eq_l[0]))
         cursor.execute("UPDATE equipos SET elo = ? WHERE id = ?", (new_elo_v, eq_v[0]))
-        cursor.execute("INSERT INTO partidos (temporada_id, jornada, equipo_local_id, equipo_visitante_id, goles_local, goles_visitante, jugado) VALUES (?, ?, ?, ?, ?, ?, 1)", (temp_id, jornada, eq_l[0], eq_v[0], goles_local, goles_visitante))
+        cursor.execute("INSERT INTO partidos (temporada_id, jornada, equipo_local_id, equipo_visitante_id, goles_local, goles_visitante, jugado, replay_url) VALUES (?, ?, ?, ?, ?, ?, 1, ?)", (temp_id, jornada, eq_l[0], eq_v[0], goles_local, goles_visitante, replay_url))
         
         conn.commit()
         conn.close()
 
-        await interaction.followup.send(f"⚽ **Partido Registrado:**\n{local} {goles_local} - {goles_visitante} {visitante}\n📊 **Nuevos ELO:** {local} ({new_elo_l}) | {visitante} ({new_elo_v})")
+        # Respuesta de confirmación en el chat actual
+        await interaction.followup.send(f"✅ Partido registrado correctamente para la jornada {jornada} de **{temporada}**.")
 
-    @app_commands.command(name="stats", description="Muestra las estadísticas y valor de mercado de un jugador")
+        # Envío del resultado formateado al canal de resultados específico
+        guild = interaction.guild
+        canal_resultados = guild.get_channel(ID_CANAL_RESULTADOS)
+        if canal_resultados:
+            embed = discord.Embed(
+                title=f"⚽ RESULTADO OFICIAL - JORNADA {jornada}",
+                description=f"🏆 **Temporada:** {temporada}\n\n**{local}** `{goles_local} - {goles_visitante}` **{visitante}**",
+                color=discord.Color.purple()
+            )
+            embed.add_field(name="📊 Actualización de ELO", value=f"• **{local}:** `{elo_l}` ➔ `{new_elo_l}`\n• **{visitante}:** `{elo_v}` ➔ `{new_elo_v}`", inline=False)
+            if replay_url:
+                embed.add_field(name="🎬 Enlace de Replay", value=f"[Ver Replay]({replay_url})", inline=False)
+            
+            await canal_resultados.send(content=f"<@&{ID_ROL_RESULTADOS}>", embed=embed)
+
+    @app_commands.command(name="stats", description="Muestra estadísticas, ELO y valor de mercado de un jugador")
     async def stats(self, interaction: discord.Interaction, miembro: discord.Member):
         await interaction.response.defer(ephemeral=True)
         conn = sqlite3.connect(DB_NAME)
